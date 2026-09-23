@@ -4,16 +4,15 @@
   "private": true,
   "description": "Experimental local tool and reasoning control gateway for Codex",
   "type": "module",
-  "engines": {
-    "node": ">=22.15"
-  },
+  "engines": { "node": ">=22.15" },
+  "bin": { "jev-codex": "bin/jev-codex.mjs" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:codex": "npm run build && node test/codex-smoke.mjs",
+    "start": "node bin/jev-codex.mjs --start",
+    "codex": "node bin/jev-codex.mjs"
   },
-  "devDependencies": {
-    "@types/node": "^22.15.0",
-    "typescript": "^5.8.3"
-  }
+  "devDependencies": { "@types/node": "^22.15.0", "typescript": "^5.8.3" }
 }
