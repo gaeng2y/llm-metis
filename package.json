@@ -1,0 +1,19 @@
+{
+  "name": "jev-control",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Experimental local tool and reasoning control gateway for Codex",
+  "type": "module",
+  "engines": {
+    "node": ">=22.15"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  }
+}
