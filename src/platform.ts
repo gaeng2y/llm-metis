@@ -10,7 +10,7 @@ const isFile = (path: string) => { try { return statSync(path).isFile(); } catch
 const windowsSystem = (name: string) => win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', name);
 
 /** Preserve argv, including TOML quotes and prompts, without a command shell. */
-export function codexLaunch(binary: string, args: string[], env = process.env, platform = process.platform, exists = isFile): Launch {
+function clientLaunch(client: 'codex' | 'claude', binary: string, args: string[], env = process.env, platform = process.platform, exists = isFile): Launch {
   if (/\.(?:mjs|cjs|js)$/i.test(binary)) return { file: process.execPath, args: [binary, ...args] };
   if (platform !== 'win32') return { file: binary, args };
   const path = Object.entries(env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '';
@@ -20,17 +20,26 @@ export function codexLaunch(binary: string, args: string[], env = process.env, p
     for (const file of win32.extname(base) ? [base] : [`${base}.exe`, `${base}.com`, `${base}.cmd`, `${base}.bat`]) {
       if (!exists(file)) continue;
       if (!/\.(?:cmd|bat)$/i.test(file)) return { file, args };
-      // npm creates .cmd shims; execute Codex's JS entry instead of interpreting the shim.
-      if (/^codex\.(?:cmd|bat)$/i.test(win32.basename(file))) {
+      // npm creates .cmd shims; execute the official JS entry instead of interpreting the shim.
+      if ([`${client}.cmd`, `${client}.bat`].includes(win32.basename(file).toLowerCase())) {
         const dir = win32.dirname(file);
-        for (const entry of [win32.join(dir, 'node_modules/@openai/codex/bin/codex.js'), win32.join(dir, '../@openai/codex/bin/codex.js')]) {
+        const script = client === 'codex' ? '@openai/codex/bin/codex.js' : '@anthropic-ai/claude-code/cli.js';
+        for (const entry of [win32.join(dir, 'node_modules', script), win32.join(dir, '..', script)]) {
           if (exists(entry)) return { file: process.execPath, args: [entry, ...args] };
         }
       }
-      throw Error('Unsupported Codex command shim. Set METIS_CODEX_BIN to codex.exe or its JavaScript entry point.');
+      throw Error(`Unsupported ${client === 'codex' ? 'Codex' : 'Claude Code'} command shim. Set METIS_${client.toUpperCase()}_BIN to ${client}.exe or its JavaScript entry point.`);
     }
   }
-  throw Error('Codex executable not found. Install Codex or set METIS_CODEX_BIN.');
+  throw Error(`${client === 'codex' ? 'Codex' : 'Claude Code'} executable not found. Install ${client === 'codex' ? 'Codex' : 'Claude Code'} or set METIS_${client.toUpperCase()}_BIN.`);
+}
+
+export function codexLaunch(binary: string, args: string[], env = process.env, platform = process.platform, exists = isFile): Launch {
+  return clientLaunch('codex', binary, args, env, platform, exists);
+}
+
+export function claudeLaunch(binary: string, args: string[], env = process.env, platform = process.platform, exists = isFile): Launch {
+  return clientLaunch('claude', binary, args, env, platform, exists);
 }
 
 export function dashboardLaunch(url: string, platform = process.platform): Launch {

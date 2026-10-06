@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, rmdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -10,7 +10,7 @@ import { loadConfig, normalizedEnv, PROVIDERS } from './config.js';
 import { createGateway } from './gateway.js';
 import { object } from './decision.js';
 import { cohort } from './metrics.js';
-import { codexLaunch, dashboardLaunch, writePrivateFile } from './platform.js';
+import { codexLaunch, claudeLaunch, dashboardLaunch, writePrivateFile } from './platform.js';
 import { configure, configuredEnv, configPath } from './configure.js';
 
 interface Instance { id: string; token: string; port: number; pid: number; legacy?: boolean }
@@ -131,18 +131,75 @@ Nonempty METIS_PROVIDER and API keys in the environment/local .env override save
 METIS_STATE_DIR and METIS_PORT select an independent local instance.
 No arguments launches Codex; the gateway remains running until --stop.`;
 
-export async function main(args = process.argv.slice(2)) {
+async function claudeArguments(args: string[], env: NodeJS.ProcessEnv, file: string, baseUrl: string, token: string, taskId: string) {
+  const forwarded: string[] = [];
+  let settings: Record<string, unknown> = {};
+  let sources = ['user','project','local'];
+  for (let n = 0; n < args.length; n++) {
+    const arg = args[n]!;
+    if (arg === '--') { forwarded.push(...args.slice(n)); break; }
+    if (arg === '--setting-sources' || arg.startsWith('--setting-sources=')) {
+      const value = arg === '--setting-sources' ? args[++n] : arg.slice('--setting-sources='.length);
+      if (value === undefined) throw Error('Claude --setting-sources requires a value.');
+      sources = value.split(',');
+      forwarded.push('--setting-sources', value);
+    } else if (arg === '--settings' || arg.startsWith('--settings=')) {
+      const value = arg === '--settings' ? args[++n] : arg.slice('--settings='.length);
+      try {
+        if (!value) throw Error();
+        const parsed: unknown = JSON.parse(value.trimStart().startsWith('{') ? value : await readFile(resolve(value), 'utf8'));
+        if (!object(parsed) || (parsed.env !== undefined && !object(parsed.env))) throw Error();
+        settings = parsed;
+      } catch { throw Error('Claude --settings must be a readable JSON settings file or a JSON object.'); }
+    } else forwarded.push(arg);
+  }
+  const settingEnv = object(settings.env) ? settings.env : {};
+  let effective: Record<string, unknown> = { ...env };
+  const files = [
+    ['user', join(env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'settings.json')],
+    ['project', resolve('.claude/settings.json')],
+    ['local', resolve('.claude/settings.local.json')],
+  ];
+  for (const [source, path] of files) if (sources.includes(source!)) {
+    try {
+      const saved: unknown = JSON.parse(await readFile(path!, 'utf8'));
+      if (object(saved) && object(saved.env)) effective = { ...effective, ...saved.env };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw Error(`Cannot read Claude ${source} settings.`);
+    }
+  }
+  effective = { ...effective, ...settingEnv };
+  if (process.platform === 'win32') effective = Object.fromEntries(Object.entries(effective).map(([key, value]) => [key.toUpperCase(), value]));
+  const providers = ['CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'];
+  if (providers.some(key => ['1','true','yes','on'].includes(String(effective[key]).trim().toLowerCase()))) throw Error('metis-claude uses the Anthropic Messages API. Bedrock, Vertex, and Foundry modes require the original claude command.');
+  // Keep authorization tied to the loopback URL, so a managed URL override cannot leak a private header.
+  const privateUrl = `${baseUrl}/${token}/${taskId}`;
+  await writePrivateFile(file, JSON.stringify({ ...settings, env: { ...settingEnv,
+    ...Object.fromEntries(providers.map(key => [key, '0'])),
+    ANTHROPIC_BASE_URL: privateUrl,
+  } }));
+  env.ANTHROPIC_BASE_URL = privateUrl;
+  delete env.METIS_CONTROL_TOKEN;
+  delete env.METIS_CONTROL_TASK_ID;
+  const at = forwarded.indexOf('--');
+  forwarded.splice(at < 0 ? forwarded.length : at, 0, '--settings', file);
+  return forwarded;
+}
+
+export async function main(args = process.argv.slice(2), client: 'codex' | 'claude' = 'codex') {
   Object.assign(process.env, normalizedEnv());
-  if (args[0] === '--help' || args[0] === '-h') { console.log(help); return; }
+  const name = client === 'claude' ? 'Claude Code' : 'Codex';
+  const commandName = `metis-${client}`;
+  if (args[0] === '--help' || args[0] === '-h') { console.log(client === 'codex' ? help : help.replaceAll('metis-codex', commandName).replaceAll('Codex', name).replace('<codex arguments>', '<claude arguments>')); return; }
   if (args[0] === 'configure' || args[0] === 'configuration') {
     if (await configure(args.slice(1))) {
       if (await running()) console.log('A gateway is already running. After its tasks finish, apply settings with metis-codex --stop then metis-codex --start. Restarting clears dashboard metrics.');
-      else console.log('Run metis-codex from your project directory to start Codex.');
+      else console.log(`Run ${commandName} from your project directory to start ${name}.`);
     }
     return;
   }
   if (args[0] === 'config-path') {
-    if (args.length !== 1) throw Error('Usage: metis-codex config-path');
+    if (args.length !== 1) throw Error(`Usage: ${commandName} config-path`);
     console.log(configPath()); return;
   }
   if (args[0] === '--serve') { await serve(); return; }
@@ -164,7 +221,6 @@ export async function main(args = process.argv.slice(2)) {
   const command = args[0];
   const management = ['--routing','--tool-routing','--effort-routing'];
   if (command && management.includes(command) && (args.length !== 2 || !['on','off'].includes(args[1]!))) throw Error(`${command} requires on or off`);
-  if (command?.startsWith('--') && command !== '--' && !['--start','--dashboard',...management].includes(command)) throw Error('Pass Codex arguments after --; use --help for gateway commands');
   const { instance, status } = await ensureStarted();
   if (command === '--start') { console.log(`llm-metis running at ${origin(instance)}`); return; }
   if (command && management.includes(command)) {
@@ -189,18 +245,30 @@ export async function main(args = process.argv.slice(2)) {
     if (Object.values(PROVIDERS).some(({ key }) => key === (process.platform === 'win32' ? name.toUpperCase() : name))) delete childEnv[name];
   }
   const userArgs = command === '--' ? args.slice(1) : args;
-  // Codex exec has its own -c parser; root-only overrides can disappear when exec also has -c.
-  // Insert before a positional '--', otherwise append within the active command's options.
-  const delimiter = userArgs.indexOf('--');
-  const at = delimiter < 0 ? userArgs.length : delimiter;
-  const launch = codexLaunch(process.env.METIS_CODEX_BIN ?? 'codex', [...userArgs.slice(0, at), ...codexArgs(origin(instance)), ...userArgs.slice(at)], childEnv);
-  const child = spawn(launch.file, launch.args, { stdio: 'inherit', env: childEnv });
-  // Terminal signals also reach Codex in the foreground group. Let Codex handle Ctrl-C itself.
-  const interrupt = () => {}; const terminate = () => { child.kill('SIGTERM'); };
-  process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
+  let settingsFile: string | undefined;
+  let child: ChildProcess | undefined;
+  // The foreground client handles terminal Ctrl-C itself.
+  const interrupt = () => {}; const terminate = () => { child?.kill('SIGTERM'); };
   try {
+    let launch;
+    if (client === 'claude') {
+      if (!Array.isArray(status.protocols) || !status.protocols.includes('messages')) throw Error('This gateway needs an update. After active tasks finish, run metis-codex --stop, then metis-claude.');
+      settingsFile = join(stateDir(), `claude-${taskId}.json`);
+      const forwarded = await claudeArguments(userArgs, childEnv, settingsFile, `${origin(instance)}/anthropic`, instance.token, taskId);
+      launch = claudeLaunch(process.env.METIS_CLAUDE_BIN ?? 'claude', forwarded, childEnv);
+    } else {
+      // Codex exec owns its -c parser; put overrides inside the active command's options.
+      const delimiter = userArgs.indexOf('--');
+      const at = delimiter < 0 ? userArgs.length : delimiter;
+      launch = codexLaunch(process.env.METIS_CODEX_BIN ?? 'codex', [...userArgs.slice(0, at), ...codexArgs(origin(instance)), ...userArgs.slice(at)], childEnv);
+    }
+    child = spawn(launch.file, launch.args, { stdio: 'inherit', env: childEnv });
+    process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
     const [code, signal] = await once(child, 'exit');
     await api(instance, 'task', { id: taskId, cohort: cohort({ toolRouting: Boolean(status.toolRouting), effortRouting: Boolean(status.effortRouting) }), durationMs: performance.now() - started, exitCode: code }).catch(() => {});
     process.exitCode = typeof code === 'number' ? code : signal === 'SIGINT' ? 130 : 1;
-  } finally { process.off('SIGINT', interrupt); process.off('SIGTERM', terminate); }
+  } finally {
+    process.off('SIGINT', interrupt); process.off('SIGTERM', terminate);
+    if (settingsFile) await unlink(settingsFile).catch(() => {});
+  }
 }

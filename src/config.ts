@@ -5,7 +5,7 @@ export const PROVIDERS = {
 } as const;
 export type Provider = keyof typeof PROVIDERS;
 export interface Config {
-  port: number; upstreamBaseUrl: string; provider: Provider; jevUrl: string; jevModel: string; jevApiKey: string;
+  port: number; upstreamBaseUrl: string; anthropicBaseUrl: string; provider: Provider; jevUrl: string; jevModel: string; jevApiKey: string;
   toolMinConfidence: number; effortMinConfidence: number; timeoutMs: number;
   toolRouting: boolean; effortRouting: boolean; directCalls: boolean;
 }
@@ -45,6 +45,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     port: number('METIS_PORT', 8791, 1, 65535, true),
     upstreamBaseUrl: endpoint(env.UPSTREAM_BASE_URL ?? 'https://api.openai.com/v1', 'UPSTREAM_BASE_URL'),
+    anthropicBaseUrl: endpoint(env.METIS_ANTHROPIC_BASE_URL ?? env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com', 'METIS_ANTHROPIC_BASE_URL'),
     provider: provider as Provider, jevUrl: endpoint(env.METIS_URL ?? p.url, 'METIS_URL'),
     jevModel: env.METIS_MODEL ?? p.model, jevApiKey: env[p.key]?.trim() ?? '',
     toolMinConfidence: number('METIS_TOOL_MIN_CONFIDENCE', .85, 0, 1),

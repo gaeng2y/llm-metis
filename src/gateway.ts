@@ -79,8 +79,10 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'" });
       return res.end(dashboard);
     }
-    if (!equalToken(req.headers['x-metis-token'], token)) return json(res, 401, { error: 'Private local token required' });
-    if (url.pathname === '/control/status' && req.method === 'GET') return json(res, 200, { service: 'llm-metis', version: '0.1.0', pid: process.pid, ...routing, upstream: config.upstreamBaseUrl, provider: config.provider, jevConfigured: Boolean(config.jevApiKey), directCalls: config.directCalls });
+    // Claude credentials live only in its loopback base URL, never in headers sent to another origin.
+    const claudePath = /^\/anthropic\/([a-f0-9]{64})\/([\w-]{1,80})(\/v1\/messages(?:\/count_tokens)?)$/.exec(url.pathname);
+    if (!equalToken(req.headers['x-metis-token'], token) && !(claudePath && equalToken(claudePath[1], token))) return json(res, 401, { error: 'Private local token required' });
+    if (url.pathname === '/control/status' && req.method === 'GET') return json(res, 200, { service: 'llm-metis', version: '0.1.0', pid: process.pid, protocols: ['responses','messages'], ...routing, upstream: config.upstreamBaseUrl, anthropicUpstream: config.anthropicBaseUrl, provider: config.provider, jevConfigured: Boolean(config.jevApiKey), directCalls: config.directCalls });
     if (url.pathname === '/control/metrics' && req.method === 'GET') return json(res, 200, metrics.snapshot());
     if (url.pathname === '/control/routing' && req.method === 'POST') {
       const value = parseBody(await readBody(req, 4096));
@@ -93,8 +95,10 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
       metrics.addTask({ id: value.id, cohort: value.cohort as Cohort, durationMs: value.durationMs, exitCode: value.exitCode as number | null }); return json(res, 200, { ok: true });
     }
     if (url.pathname === '/control/stop' && req.method === 'POST' && onStop) { json(res, 200, { stopping: true }); setImmediate(onStop); return; }
-    const path = url.pathname.replace(/^\/v1(?=\/|$)/, '');
-    if (!(req.method === 'POST' && ['/responses','/responses/compact'].includes(path)) && !(req.method === 'GET' && path === '/models')) return json(res, 404, { error: 'Unsupported endpoint' });
+    const anthropic = url.pathname.startsWith('/anthropic/');
+    const path = claudePath ? claudePath[3]! : anthropic ? url.pathname.slice('/anthropic'.length) : url.pathname.replace(/^\/v1(?=\/|$)/, '');
+    if (anthropic ? !(req.method === 'POST' && ['/v1/messages','/v1/messages/count_tokens'].includes(path)) : !(req.method === 'POST' && ['/responses','/responses/compact'].includes(path)) && !(req.method === 'GET' && path === '/models')) return json(res, 404, { error: 'Unsupported endpoint' });
+    const isGeneration = path === '/responses' || path === '/v1/messages';
     const abort = new AbortController();
     res.on('close', () => { if (!res.writableEnded) abort.abort(); });
     const started = performance.now();
@@ -102,15 +106,14 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
     const parsed = bytes ? parseBody(bytes, req.headers['content-encoding']) : undefined;
     const cfg = { ...config, ...routing };
     let route: RouteResult = { request: parsed ?? {}, mode: 'passthrough', reason: 'unrouted_endpoint', effortApplied: false, jevCalled: false, jevLatencyMs: 0 };
-    if (path === '/responses' && parsed) {
-      if (engine || config.jevApiKey) route = await control(parsed, evaluator, cfg, abort.signal);
+    if (isGeneration && parsed) {
+      if (engine || config.jevApiKey) route = await control(parsed, evaluator, cfg, abort.signal, anthropic ? 'messages' : 'responses');
       else route.reason = 'jev_credentials_missing';
     }
     const modelStarted = performance.now();
     let status = 502; let outcome = 'upstream_error';
     let observer: UsageObserver | undefined;
     let modelLatencyMs = 0;
-    const isGeneration = path === '/responses';
     try {
       if (abort.signal.aborted) throw Error('cancelled');
       if (route.direct) {
@@ -129,7 +132,7 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
           const dropped = new Set([...hop, ...(req.headers.connection ?? '').toLowerCase().split(',').map(v => v.trim()), 'accept-encoding','origin','referer']);
           for (const [key, value] of Object.entries(req.headers)) if (!dropped.has(key) && !key.startsWith('x-metis-') && !key.startsWith('x-jev-') && !key.startsWith('sec-') && value !== undefined) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
           if (rewrite) headers.delete('content-encoding');
-          return fetch(`${config.upstreamBaseUrl}${path}${url.search}`, { method: req.method, headers,
+          return fetch(`${anthropic ? config.anthropicBaseUrl : config.upstreamBaseUrl}${path}${url.search}`, { method: req.method, headers,
             body: rewrite ? rewrittenBody : bytes ? new Uint8Array(bytes) : undefined, signal: abort.signal, redirect: 'error' });
         };
         const rewritten = parsed !== undefined && route.request !== parsed;
@@ -162,7 +165,7 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
       else if (!res.writableEnded) res.destroy();
     } finally {
       if (isGeneration) {
-        const task = req.headers['x-metis-task-id'];
+        const task = claudePath?.[2] ?? req.headers['x-metis-task-id'];
         metrics.add({ id: randomUUID(), time: new Date().toISOString(), cohort: cohort(cfg), model: typeof parsed?.model === 'string' ? parsed.model.slice(0, 100) : '',
           taskId: typeof task === 'string' && /^[\w-]{1,80}$/.test(task) ? task : undefined,
           ...routeMetric(route, cfg), ...observer?.usage, modelLatencyMs, requestLatencyMs: performance.now() - started, status, outcome });

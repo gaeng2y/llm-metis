@@ -1,5 +1,6 @@
 import { object, probability, validArguments, type ControlDecision, type DecisionEngine, type JsonObject, type Mode } from './decision.js';
 import { extractState } from './state.js';
+import { extractAnthropicState } from './anthropic.js';
 import type { Config } from './config.js';
 
 export interface RouteResult {
@@ -7,11 +8,13 @@ export interface RouteResult {
   jevCalled: boolean; jevLatencyMs: number; decision?: ControlDecision;
   direct?: { name: string; arguments: JsonObject };
 }
-export async function control(request: JsonObject, engine: DecisionEngine, config: Config, signal?: AbortSignal): Promise<RouteResult> {
+export async function control(request: JsonObject, engine: DecisionEngine, config: Config, signal?: AbortSignal, protocol: 'responses' | 'messages' = 'responses'): Promise<RouteResult> {
+  const messages = protocol === 'messages';
+  const effortField = messages ? 'output_config' : 'reasoning';
   const result: RouteResult = { request, mode: 'passthrough', reason: 'unchanged', effortApplied: false, jevCalled: false, jevLatencyMs: 0 };
   if (!config.toolRouting && !config.effortRouting) return { ...result, reason: 'routing_disabled' };
   let state;
-  try { state = extractState(request); }
+  try { state = messages ? extractAnthropicState(request) : extractState(request); }
   catch { return { ...result, reason: 'state_extraction_failed' }; }
   if (state.incompleteHistory) return { ...result, reason: 'incomplete_history' };
   const routeTool = config.toolRouting && state.toolChoice === 'auto' && state.availableTools.length > 0 && state.availableTools.length <= 120;
@@ -37,18 +40,18 @@ export async function control(request: JsonObject, engine: DecisionEngine, confi
     if (routeTool && probability(tool.confidence) && tool.confidence >= config.toolMinConfidence) {
       const selected = state.availableTools.find(t => t.name === tool.name);
       if (tool.mode === 'none') {
-        result.request = { ...request, tool_choice: 'none' }; result.mode = 'none';
+        result.request = { ...request, tool_choice: messages ? { type: 'none' } : 'none' }; result.mode = 'none';
       } else if ((tool.mode === 'forced' || tool.mode === 'direct') && selected?.forceable) {
-        if (tool.mode === 'direct' && config.directCalls && request.store === false && validArguments(selected, tool.arguments)) {
+        if (!messages && tool.mode === 'direct' && config.directCalls && request.store === false && validArguments(selected, tool.arguments)) {
           result.mode = 'direct'; result.direct = { name: selected.name, arguments: tool.arguments };
         } else {
-          result.request = { ...request, tool_choice: { type: selected.kind, name: selected.name } }; result.mode = 'forced';
+          result.request = { ...request, tool_choice: messages ? { ...(object(request.tool_choice) ? request.tool_choice : {}), type: 'tool', name: selected.name } : { type: selected.kind, name: selected.name } }; result.mode = 'forced';
         }
       }
     }
-    if (result.mode !== 'direct' && routeEffort && probability(reasoning.confidence) && reasoning.confidence >= config.effortMinConfidence && ['low','medium','high'].includes(reasoning.effort) && (request.reasoning === undefined || request.reasoning === null || object(request.reasoning))) {
+    if (result.mode !== 'direct' && routeEffort && probability(reasoning.confidence) && reasoning.confidence >= config.effortMinConfidence && ['low','medium','high'].includes(reasoning.effort) && (request[effortField] === undefined || request[effortField] === null || object(request[effortField]))) {
       if (state.currentEffort !== reasoning.effort) {
-        result.request = { ...result.request, reasoning: { ...(object(request.reasoning) ? request.reasoning : {}), effort: reasoning.effort } };
+        result.request = { ...result.request, [effortField]: { ...(object(request[effortField]) ? request[effortField] : {}), effort: reasoning.effort } };
         result.effortApplied = true;
       }
     }

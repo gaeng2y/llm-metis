@@ -2,10 +2,10 @@
   "name": "llm-metis",
   "version": "0.1.0",
   "private": true,
-  "description": "Experimental local tool and reasoning control gateway for Codex",
+  "description": "Experimental local tool and reasoning control gateway for Codex and Claude Code",
   "type": "module",
   "engines": { "node": ">=22.15" },
-  "bin": { "llm-metis": "bin/metis-codex.mjs", "metis-codex": "bin/metis-codex.mjs" },
+  "bin": { "llm-metis": "bin/metis-codex.mjs", "metis-codex": "bin/metis-codex.mjs", "metis-claude": "bin/metis-claude.mjs" },
   "files": ["bin/", "dist/", "src/dashboard.html", "docs/", "README*.md", ".env.example", "src/*.ts", "tsconfig.json"],
   "scripts": {
     "prepare": "npm run build",
@@ -13,8 +13,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test \"test/*.test.mjs\"",
     "test:codex": "npm run build && node test/codex-smoke.mjs",
+    "test:claude": "npm run build && node test/claude-smoke.mjs",
     "start": "node bin/metis-codex.mjs --start",
-    "codex": "node bin/metis-codex.mjs"
+    "codex": "node bin/metis-codex.mjs",
+    "claude": "node bin/metis-claude.mjs"
   },
   "devDependencies": { "@types/node": "^22.15.0", "typescript": "^5.8.3" }
 }
