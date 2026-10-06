@@ -10,9 +10,11 @@ Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
                     → 元数据与用量 → 本地仪表盘
 ```
 
-需要 Node.js 22.15 或更高版本，以及已安装的 Codex CLI。没有外部运行时依赖。最初的设计、参考提交、实现顺序和风险见[架构提案](docs/architecture.md)；已完成的检查及其局限见[验证记录](docs/validation.md)。这两份文档以英文提供。
+面向 Linux、原生 Windows 和 Apple Silicon macOS。需要 Node.js 22.15 或更高版本，以及为同一平台安装的 Codex CLI。网关编译为无外部运行时依赖的 JavaScript，因此在 Apple Silicon 上使用原生 arm64 Node.js 即可运行，无需 Rosetta 或原生项目构建。最初的设计、参考提交、实现顺序和风险见[架构提案](docs/architecture.md)；已完成的检查及其局限见[验证记录](docs/validation.md)。这两份文档以英文提供。
 
 ## 快速开始
+
+macOS / Linux:
 
 ```sh
 npm install
@@ -23,9 +25,21 @@ chmod 600 .env
 npm run codex
 ```
 
+Windows PowerShell:
+
+```powershell
+npm install
+npm run build
+Copy-Item .env.example .env
+# 在 .env 中设置 Jev 服务商及其 API 密钥。
+npm run codex
+```
+
 这些命令会在后台启动网关并运行 Codex。启动器读取当前工作目录中的 `.env`。如果缺少凭据或 Jev 调用失败，网关会转发原始模型请求。未配置密钥时，仪表盘会显示 `Credentials: missing` 和 `jev_credentials_missing`。
 
 如需通过 PATH 使用该命令，请在此项目目录运行 `npm link`。无需全局注册，也可以用 `node bin/jev-codex.mjs …` 执行下面的所有命令。
+
+Windows 支持原生 `codex.exe` 和标准 npm 安装生成的 `codex.cmd`。npm 启动器直接执行官方 JavaScript 入口，不经过 shell。`JEV_CODEX_BIN` 也可指定原生可执行文件或 `.js`、`.mjs`、`.cjs` 入口路径；不支持自定义 `.cmd` / `.bat` 启动器。
 
 ```sh
 jev-codex --start
@@ -43,6 +57,8 @@ jev-codex -- exec --model gpt-6-astra '在此描述你的任务'
 
 路由命令和仪表盘中的修改会立即应用于网关后续处理的请求。重启后恢复环境变量中的设置。修改环境变量、凭据或 upstream URL 后，请依次运行 `--stop` 和 `--start`。使用同一状态目录的终端共享一个网关。如需独立实验，请为 `JEV_STATE_DIR` 和 `JEV_PORT` 分别设置不同的值。
 
+仪表盘通过 macOS 的 `open`、Linux 的 `xdg-open` 或 Windows 的 `rundll32` 打开。在 Linux 上打开仪表盘需要桌面会话和 `xdg-open`。
+
 ## 认证与配置
 
 CLI 仅将 `-c model_provider=…` 和服务商配置传给它启动的 Codex 进程，不会修改 `~/.codex/config.toml` 或登录文件。模型认证和凭据刷新由 Codex 负责；网关将 `Authorization` 和 `ChatGPT-Account-Id` 转发至 upstream。Jev 凭据仅用于单独的评估请求。
@@ -51,13 +67,43 @@ CLI 仅将 `-c model_provider=…` 和服务商配置传给它启动的 Codex �
 
 启动器仅为本次运行设置 `supports_websockets=false`，以使用 HTTP/SSE。不支持的 WebSocket 连接会被拒绝。此 CLI 不会自动连接 Codex 桌面应用中已有的任务。
 
+### Jev 服务商设置
+
+选择一个 Jev 服务商，并在 `.env` 中填写其凭据。只需提供所选服务商的凭据，与 Codex 登录分开配置。
+
+| 服务商 | `JEV_PROVIDER` | 凭据环境变量 | 默认模型 |
+|---|---|---|---|
+| [OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/)（默认） | `openrouter` | `OPENROUTER_API_KEY` | `typesafe/jev-1.13` |
+| [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/modalities/evaluation) | `vercel` | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` |
+| [TypeSafe](https://docs.typesafe.ai/api) | `typesafe` | `TYPESAFE_API_KEY` | `jev-latest` |
+
+OpenRouter 配置示例：
+
+```dotenv
+JEV_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_api_key
+AI_GATEWAY_API_KEY=
+TYPESAFE_API_KEY=
+```
+
+可以同时保存三个密钥。若要使用 Vercel 或 TypeSafe，请设置 `JEV_PROVIDER=vercel` 或 `JEV_PROVIDER=typesafe`，并填写对应密钥。只使用所选服务商的密钥。
+
+参照 [Astra-Ares 的显式服务商配置](https://github.com/miuuyy/Astra-Ares/blob/main/docs/configuration.md)，省略或留空 `JEV_PROVIDER` 时使用 `openrouter`。其他已配置的密钥不会改变选择，发生错误时也不会切换服务商。缺少凭据或评估失败时，保留原始 Codex 请求。
+
+修改 `.env` 后，请重启网关并检查状态：
+
+```sh
+node bin/jev-codex.mjs --stop
+node bin/jev-codex.mjs --start
+node bin/jev-codex.mjs --status
+```
+
+`jevConfigured: true` 仅表示已加载密钥，并不代表密钥有效或实际 Jev 决策已成功。执行任务后，请在仪表盘中检查评估是否成功以及实际应用的 effort。
+
 | 环境变量 | 默认值 / 说明 |
 |---|---|
-| `JEV_PROVIDER` | 按 typesafe → openrouter → vercel 的顺序选择第一个已配置密钥的服务商；均未配置时使用 typesafe |
-| `TYPESAFE_API_KEY` | TypeSafe 凭据；默认模型为 `jev-latest` |
-| `OPENROUTER_API_KEY` | OpenRouter 凭据；默认模型为 `typesafe/jev-1.13` |
-| `AI_GATEWAY_API_KEY` | Vercel AI Gateway 凭据；默认模型为 `typesafe-ai/jev` |
-| `JEV_MODEL`, `JEV_URL` | 显式覆盖服务商模型和评估端点 |
+| `JEV_PROVIDER` | 省略或留空时为 `openrouter`；可选 `openrouter`、`vercel` 或 `typesafe`，仅使用所选服务商的密钥，不自动切换 |
+| `JEV_MODEL`, `JEV_URL` | 使用所选服务商的评估 API 格式覆盖模型和端点；不支持任意 chat-completions 端点 |
 | `JEV_TOOL_MIN_CONFIDENCE` | `0.85` |
 | `JEV_EFFORT_MIN_CONFIDENCE` | `0.85` |
 | `JEV_TIMEOUT_MS` | `2000`；整个决策过程的等待时限，不重试 |
@@ -66,8 +112,8 @@ CLI 仅将 `-c model_provider=…` 和服务商配置传给它启动的 Codex �
 | `JEV_DIRECT_CALLS` | `off`；需显式启用受限的函数调用合成 |
 | `JEV_PORT` | `8791`；始终仅绑定 `127.0.0.1` |
 | `UPSTREAM_BASE_URL` | 按上述登录方式选择；URL 中不允许包含凭据和查询参数 |
-| `JEV_STATE_DIR` | `~/.local/state/jev-control`；包含本地令牌的 instance 文件权限为 0600 |
-| `JEV_CODEX_BIN` | `codex`；可覆盖为其他 Codex 可执行文件路径 |
+| `JEV_STATE_DIR` | `~/.local/state/jev-control`（Windows 为 `%USERPROFILE%\.local\state\jev-control`）；本地令牌文件在 Unix 上使用 0600 权限，在 Windows 上使用仅允许当前用户访问的 DACL |
+| `JEV_CODEX_BIN` | `codex`；可覆盖为原生可执行文件或 `.js` / `.mjs` / `.cjs` 入口路径 |
 
 ## 决策规则
 
@@ -104,6 +150,14 @@ Jev 会收到最近的公开对话上下文、公开摘要、长度受限的工�
 baseline 仍然经过网关，只是禁用了两种决策。它保留请求中的 effort，不会自动设为 HIGH。如需以 HIGH 为基准，请向 Codex 传入 `-c model_reasoning_effort=high`。另外直接运行一次 Codex，有助于单独测量代理本身的开销。
 
 ## 验证与范围
+
+CI 配置为在以下平台上使用 Node.js `22.15.0` 和 `24`。该矩阵尚未运行，Linux 和 Windows 的结果仍待验证。
+
+| CI 平台 | 架构 |
+|---|---|
+| Ubuntu 24.04 | x64 |
+| macOS 15 | arm64 (Apple Silicon) |
+| Windows Server 2022 | x64 |
 
 ```sh
 npm run typecheck

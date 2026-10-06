@@ -10,9 +10,11 @@ Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
                     → メタデータ・使用量 → ローカルダッシュボード
 ```
 
-Node.js 22.15 以降と、インストール済みの Codex CLI が必要です。外部のランタイム依存関係はありません。当初の設計、参照コミット、実装順序、リスクは[設計提案](docs/architecture.md)、実施済みの確認とその限界は[検証記録](docs/validation.md)を参照してください。これらの文書は英語です。
+Linux、ネイティブ Windows、Apple Silicon 搭載 macOS を対象としています。Node.js 22.15 以降と、同じプラットフォーム用にインストールした Codex CLI が必要です。ゲートウェイは外部のランタイム依存関係がない JavaScript にビルドされるため、Apple Silicon ではネイティブ arm64 Node.js で実行でき、Rosetta やネイティブプロジェクトのビルドは不要です。当初の設計、参照コミット、実装順序、リスクは[設計提案](docs/architecture.md)、実施済みの確認とその限界は[検証記録](docs/validation.md)を参照してください。これらの文書は英語です。
 
 ## はじめに
+
+macOS / Linux:
 
 ```sh
 npm install
@@ -23,9 +25,21 @@ chmod 600 .env
 npm run codex
 ```
 
+Windows PowerShell:
+
+```powershell
+npm install
+npm run build
+Copy-Item .env.example .env
+# .env に Jev プロバイダーと対応する API キーを設定します。
+npm run codex
+```
+
 ゲートウェイをバックグラウンドで起動し、Codex を実行します。ランチャーは現在の作業ディレクトリにある `.env` を読み込みます。認証情報がない場合や Jev が失敗した場合は、元のモデルリクエストを転送します。キーが未設定の場合、ダッシュボードには `Credentials: missing` と `jev_credentials_missing` が表示されます。
 
 コマンドを PATH から利用するには、このチェックアウト内で `npm link` を実行します。グローバル登録をしなくても、以下のコマンドはすべて `node bin/jev-codex.mjs …` として実行できます。
+
+Windows ではネイティブの `codex.exe` と標準 npm インストールの `codex.cmd` に対応します。npm ランチャーはシェルを使わず、公式の JavaScript エントリーポイントを実行します。`JEV_CODEX_BIN` にはネイティブ実行ファイル、または `.js`、`.mjs`、`.cjs` のエントリーポイントを指定できます。独自の `.cmd` / `.bat` ランチャーには対応していません。
 
 ```sh
 jev-codex --start
@@ -43,6 +57,8 @@ jev-codex -- exec --model gpt-6-astra 'ここにタスクを記述してくだ�
 
 ルーティングコマンドとダッシュボードの変更は、稼働中のゲートウェイが処理する次のリクエストから適用されます。再起動すると環境設定に戻ります。環境変数、認証情報、upstream URL を変更した後は、`--stop`、`--start` の順に実行してください。同じ状態ディレクトリを使うターミナルは1つのゲートウェイを共有します。独立した実験には、`JEV_STATE_DIR` と `JEV_PORT` の両方に異なる値を指定します。
 
+ダッシュボードは macOS の `open`、Linux の `xdg-open`、Windows の `rundll32` で開きます。Linux で開くには、デスクトップセッションと `xdg-open` が必要です。
+
 ## 認証と設定
 
 CLI は `-c model_provider=…` とプロバイダー設定を、自身が起動する Codex プロセスにのみ渡します。`~/.codex/config.toml` やログインファイルは変更しません。モデルの認証と認証情報の更新は Codex が担当し、ゲートウェイは `Authorization` と `ChatGPT-Account-Id` を upstream に転送します。Jev の認証情報は、別途送信する評価リクエストにのみ使用します。
@@ -51,13 +67,43 @@ CLI は `-c model_provider=…` とプロバイダー設定を、自身が起動
 
 ランチャーは HTTP/SSE を使うため、その実行に限って `supports_websockets=false` を設定します。未対応の WebSocket 接続は拒否します。この CLI は、Codex デスクトップアプリの既存タスクを自動的に接続するものではありません。
 
+### Jev プロバイダーの設定
+
+Jev プロバイダーを1つ選び、その認証情報を `.env` に設定してください。選択したプロバイダーの認証情報だけが必要で、Codex のログインとは別です。
+
+| プロバイダー | `JEV_PROVIDER` | 認証用環境変数 | デフォルトモデル |
+|---|---|---|---|
+| [OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/) (デフォルト) | `openrouter` | `OPENROUTER_API_KEY` | `typesafe/jev-1.13` |
+| [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/modalities/evaluation) | `vercel` | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` |
+| [TypeSafe](https://docs.typesafe.ai/api) | `typesafe` | `TYPESAFE_API_KEY` | `jev-latest` |
+
+OpenRouter の設定例:
+
+```dotenv
+JEV_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_api_key
+AI_GATEWAY_API_KEY=
+TYPESAFE_API_KEY=
+```
+
+3つのキーをすべて保存しても構いません。Vercel または TypeSafe を使う場合は、`JEV_PROVIDER=vercel` または `JEV_PROVIDER=typesafe` に変更し、対応するキーを入力してください。選択したプロバイダーのキーだけを使用します。
+
+[Astra-Ares の明示的なプロバイダー設定](https://github.com/miuuyy/Astra-Ares/blob/main/docs/configuration.md)に従い、`JEV_PROVIDER` を省略または空欄にすると `openrouter` を使います。他のキーが設定されていても選択は変わらず、エラーが起きても別のプロバイダーへ切り替えません。認証情報がない場合や評価に失敗した場合は、元の Codex リクエストを維持します。
+
+`.env` を変更した後は、ゲートウェイを再起動して状態を確認してください。
+
+```sh
+node bin/jev-codex.mjs --stop
+node bin/jev-codex.mjs --start
+node bin/jev-codex.mjs --status
+```
+
+`jevConfigured: true` はキーが読み込まれたことを示し、キーの有効性や実際の Jev 判断の成功を確認するものではありません。タスク実行後にダッシュボードで評価の成否と適用された effort を確認してください。
+
 | 環境変数 | デフォルト / 説明 |
 |---|---|
-| `JEV_PROVIDER` | キーが設定されたプロバイダーを typesafe → openrouter → vercel の順に選択。該当なしの場合は typesafe |
-| `TYPESAFE_API_KEY` | TypeSafe の認証情報。デフォルトモデルは `jev-latest` |
-| `OPENROUTER_API_KEY` | OpenRouter の認証情報。デフォルトモデルは `typesafe/jev-1.13` |
-| `AI_GATEWAY_API_KEY` | Vercel AI Gateway の認証情報。デフォルトモデルは `typesafe-ai/jev` |
-| `JEV_MODEL`, `JEV_URL` | プロバイダーのモデルと評価エンドポイントを明示的に上書き |
+| `JEV_PROVIDER` | 省略または空欄なら `openrouter`。`openrouter`、`vercel`、`typesafe` から選択し、選択したキーのみ使用。自動切り替えなし |
+| `JEV_MODEL`, `JEV_URL` | 選択したプロバイダーの評価 API 形式を維持してモデルとエンドポイントを上書き。任意の chat-completions エンドポイントは未対応 |
 | `JEV_TOOL_MIN_CONFIDENCE` | `0.85` |
 | `JEV_EFFORT_MIN_CONFIDENCE` | `0.85` |
 | `JEV_TIMEOUT_MS` | `2000`。判断全体の待機期限。再試行なし |
@@ -66,8 +112,8 @@ CLI は `-c model_provider=…` とプロバイダー設定を、自身が起動
 | `JEV_DIRECT_CALLS` | `off`。制限付きの関数呼び出し合成を明示的に有効化 |
 | `JEV_PORT` | `8791`。常に `127.0.0.1` のみにバインド |
 | `UPSTREAM_BASE_URL` | 上記のログイン方式に応じて選択。URL 内の認証情報とクエリパラメーターは禁止 |
-| `JEV_STATE_DIR` | `~/.local/state/jev-control`。ローカルトークンを含む instance ファイルの権限は 0600 |
-| `JEV_CODEX_BIN` | `codex`。別の Codex 実行ファイルのパスで上書き可能 |
+| `JEV_STATE_DIR` | `~/.local/state/jev-control`（Windows は `%USERPROFILE%\.local\state\jev-control`）。ローカルトークンファイルは Unix では 0600、Windows では現在のユーザーのみを許可する DACL を適用 |
+| `JEV_CODEX_BIN` | `codex`。ネイティブ実行ファイル、または `.js` / `.mjs` / `.cjs` のエントリーポイントで上書き可能 |
 
 ## 判断ポリシー
 
@@ -104,6 +150,14 @@ Jev には、直近の公開された会話コンテキスト、公開要約、�
 baseline もゲートウェイを経由しますが、両方の判断を無効にします。HIGH を自動設定するのではなく、指定された effort を維持します。HIGH を基準にする場合は、Codex に `-c model_reasoning_effort=high` を渡してください。別途 Codex を直接実行すると、プロキシ自体のオーバーヘッドも切り分けられます。
 
 ## 検証と対応範囲
+
+CI は以下のプラットフォームで Node.js `22.15.0` と `24` を使う構成です。このマトリックスはまだ実行しておらず、Linux と Windows の結果は確認待ちです。
+
+| CI プラットフォーム | アーキテクチャ |
+|---|---|
+| Ubuntu 24.04 | x64 |
+| macOS 15 | arm64 (Apple Silicon) |
+| Windows Server 2022 | x64 |
 
 ```sh
 npm run typecheck

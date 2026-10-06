@@ -10,9 +10,11 @@ Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
                     → Metadata and usage → Local dashboard
 ```
 
-Requires Node.js 22.15 or later and an installed Codex CLI. There are no external runtime dependencies. See the [architecture proposal](docs/architecture.md) for the original design, reference commits, implementation order, and risks, and the [validation record](docs/validation.md) for completed checks and their limits.
+Targets Linux, native Windows, and macOS on Apple Silicon. Requires Node.js 22.15 or later and a Codex CLI installed for the same platform. The gateway builds to plain JavaScript with no external runtime dependencies; native arm64 Node.js runs it on Apple Silicon without Rosetta or a native project build. See the [architecture proposal](docs/architecture.md) for the original design, reference commits, implementation order, and risks, and the [validation record](docs/validation.md) for completed checks and their limits.
 
 ## Getting started
+
+macOS / Linux:
 
 ```sh
 npm install
@@ -23,9 +25,21 @@ chmod 600 .env
 npm run codex
 ```
 
+Windows PowerShell:
+
+```powershell
+npm install
+npm run build
+Copy-Item .env.example .env
+# Set your Jev provider and its API key in .env.
+npm run codex
+```
+
 These commands start the gateway in the background and launch Codex. The launcher reads `.env` from the current working directory. If credentials are missing or Jev fails, the gateway forwards the original model request. The dashboard shows `Credentials: missing` and `jev_credentials_missing` when no key is configured.
 
 To make the command available on your PATH, run `npm link` from this checkout. Without registering it globally, you can run every command below as `node bin/jev-codex.mjs …`.
+
+On Windows, both native `codex.exe` and the standard npm installation's `codex.cmd` are supported. The npm launcher uses the official JavaScript entry point without a shell. `JEV_CODEX_BIN` can also point to a native executable or a `.js`, `.mjs`, or `.cjs` entry point; custom `.cmd` / `.bat` launchers are not supported.
 
 ```sh
 jev-codex --start
@@ -43,6 +57,8 @@ jev-codex -- exec --model gpt-6-astra 'Describe your task here'
 
 Routing commands and dashboard changes apply immediately to subsequent requests handled by the running gateway. Restarting restores the environment settings. Run `--stop` followed by `--start` after changing environment variables, credentials, or the upstream URL. Terminals using the same state directory share one gateway. Set different values for both `JEV_STATE_DIR` and `JEV_PORT` to run independent experiments.
 
+The dashboard opens with `open` on macOS, `xdg-open` on Linux, and `rundll32` on Windows. Linux dashboard opening requires a desktop session and `xdg-open`.
+
 ## Authentication and configuration
 
 The CLI passes `-c model_provider=…` and provider settings only to the Codex process it launches. It does not modify `~/.codex/config.toml` or login files. Codex owns model authentication and credential refresh; the gateway forwards `Authorization` and `ChatGPT-Account-Id` to the upstream. Jev credentials are used only for separate evaluator requests.
@@ -51,13 +67,43 @@ If the readable Codex `auth.json` identifies a ChatGPT login, the default upstre
 
 The launcher sets `supports_websockets=false` for that invocation to use HTTP/SSE. Unsupported WebSocket connections are rejected. This CLI does not automatically connect existing tasks in the Codex desktop app.
 
+### Jev provider setup
+
+Choose one Jev provider and add its credentials to `.env`. You only need credentials for the selected provider, separate from your Codex login.
+
+| Provider | `JEV_PROVIDER` | Credential variable | Default model |
+|---|---|---|---|
+| [OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/) (default) | `openrouter` | `OPENROUTER_API_KEY` | `typesafe/jev-1.13` |
+| [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/modalities/evaluation) | `vercel` | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` |
+| [TypeSafe](https://docs.typesafe.ai/api) | `typesafe` | `TYPESAFE_API_KEY` | `jev-latest` |
+
+For OpenRouter, set:
+
+```dotenv
+JEV_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_api_key
+AI_GATEWAY_API_KEY=
+TYPESAFE_API_KEY=
+```
+
+You may store all three keys. To use Vercel or TypeSafe, set `JEV_PROVIDER=vercel` or `JEV_PROVIDER=typesafe` and fill its key. Only the selected provider's key is used.
+
+Following [Astra-Ares's explicit provider configuration](https://github.com/miuuyy/Astra-Ares/blob/main/docs/configuration.md), an omitted or blank `JEV_PROVIDER` defaults to `openrouter`. Other configured keys never change the selection, including after an error. Missing credentials or evaluation failures preserve the original Codex request.
+
+After editing `.env`, restart the gateway and check its status:
+
+```sh
+node bin/jev-codex.mjs --stop
+node bin/jev-codex.mjs --start
+node bin/jev-codex.mjs --status
+```
+
+`jevConfigured: true` confirms that a key was loaded; it does not verify the key or a live Jev decision. Check the dashboard after a task for successful evaluation and applied effort.
+
 | Environment variable | Default / description |
 |---|---|
-| `JEV_PROVIDER` | First provider with a configured key, in typesafe → openrouter → vercel order; typesafe if none is configured |
-| `TYPESAFE_API_KEY` | TypeSafe credentials; default model `jev-latest` |
-| `OPENROUTER_API_KEY` | OpenRouter credentials; default model `typesafe/jev-1.13` |
-| `AI_GATEWAY_API_KEY` | Vercel AI Gateway credentials; default model `typesafe-ai/jev` |
-| `JEV_MODEL`, `JEV_URL` | Explicit overrides for the provider model and evaluation endpoint |
+| `JEV_PROVIDER` | `openrouter` if omitted or blank; select `openrouter`, `vercel`, or `typesafe`. Only the selected provider's key is used; no automatic switching |
+| `JEV_MODEL`, `JEV_URL` | Override the model and endpoint using the selected provider's evaluation API format; arbitrary chat-completions endpoints are not supported |
 | `JEV_TOOL_MIN_CONFIDENCE` | `0.85` |
 | `JEV_EFFORT_MIN_CONFIDENCE` | `0.85` |
 | `JEV_TIMEOUT_MS` | `2000`; deadline for the entire decision, with no retries |
@@ -66,8 +112,8 @@ The launcher sets `supports_websockets=false` for that invocation to use HTTP/SS
 | `JEV_DIRECT_CALLS` | `off`; opt in to restricted function-call synthesis |
 | `JEV_PORT` | `8791`; always binds only to `127.0.0.1` |
 | `UPSTREAM_BASE_URL` | Selected from the login method as described above; credentials and query parameters are not allowed in the URL |
-| `JEV_STATE_DIR` | `~/.local/state/jev-control`; the instance file containing the local token uses mode 0600 |
-| `JEV_CODEX_BIN` | `codex`; override with a different Codex executable path |
+| `JEV_STATE_DIR` | `~/.local/state/jev-control` (`%USERPROFILE%\.local\state\jev-control` on Windows); the local token file uses mode 0600 on Unix and a current-user-only DACL on Windows |
+| `JEV_CODEX_BIN` | `codex`; override with a native executable or a `.js` / `.mjs` / `.cjs` entry point |
 
 ## Decision policy
 
@@ -104,6 +150,14 @@ To compare the four modes, use the same model, initial effort, repository starti
 Baseline still passes through the gateway with both decisions disabled. It preserves the requested effort rather than automatically setting HIGH. For a HIGH baseline, pass `-c model_reasoning_effort=high` to Codex. A separate direct Codex run can help isolate the proxy's own overhead.
 
 ## Validation and scope
+
+The CI workflow is configured for the following platforms with Node.js `22.15.0` and `24`. This matrix has not run yet; Linux and Windows results are pending.
+
+| CI platform | Architecture |
+|---|---|
+| Ubuntu 24.04 | x64 |
+| macOS 15 | arm64 (Apple Silicon) |
+| Windows Server 2022 | x64 |
 
 ```sh
 npm run typecheck
