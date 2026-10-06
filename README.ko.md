@@ -10,7 +10,7 @@ Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
                     → 메타데이터·사용량 → 로컬 대시보드
 ```
 
-Linux, 네이티브 Windows, Apple Silicon macOS를 대상으로 합니다. Node.js 22.15 이상과 같은 플랫폼용 Codex CLI가 필요합니다. 게이트웨이는 외부 런타임 의존성 없는 JavaScript로 빌드되므로, Apple Silicon에서는 네이티브 arm64 Node.js로 Rosetta나 네이티브 프로젝트 빌드 없이 실행합니다. 최초 설계, 참고 커밋, 구현 순서와 위험 요소는 [설계 문서](docs/architecture.md), 수행한 검사와 한계는 [검증 기록](docs/validation.md)에 있습니다. 두 문서는 영어로 제공됩니다.
+Linux 데스크톱 PC, Apple Silicon Mac, 네이티브 Windows 10/11 x64 PC를 대상으로 합니다. Node.js 22.15 이상과 같은 플랫폼용 Codex CLI가 필요합니다. 게이트웨이는 외부 런타임 의존성 없는 JavaScript로 빌드되므로, Apple Silicon에서는 네이티브 arm64 Node.js로 Rosetta나 네이티브 프로젝트 빌드 없이 실행합니다. 최초 설계, 참고 커밋, 구현 순서와 위험 요소는 [설계 문서](docs/architecture.md), 수행한 검사와 한계는 [검증 기록](docs/validation.md)에 있습니다. 두 문서는 영어로 제공됩니다.
 
 ## 시작하기
 
@@ -159,13 +159,15 @@ baseline도 게이트웨이를 거치되 두 결정을 끈 상태입니다. HIGH
 
 ## 검증과 범위
 
-CI는 아래 플랫폼에서 Node.js `22.15.0`과 `24`를 사용하도록 구성했습니다. 이 매트릭스는 아직 실행하지 않았으며, Linux와 Windows 결과는 확인 대기 중입니다.
+CI는 아래 GitHub 호스팅 러너에서 Node.js `22.15.0`과 `24`를 사용합니다. `windows-2022`는 Windows Server 2022 테스트 환경을 뜻하며, 사용자에게 Windows Server가 필요한 것은 아닙니다.
 
-| CI 플랫폼 | 아키텍처 |
-|---|---|
-| Ubuntu 24.04 | x64 |
-| macOS 15 | arm64 (Apple Silicon) |
-| Windows Server 2022 | x64 |
+| 사용자 플랫폼 | CI 러너 | 아키텍처 |
+|---|---|---|
+| Linux 데스크톱 | `ubuntu-24.04` | x64 |
+| Apple Silicon macOS | `macos-15` | arm64 |
+| Windows 10/11 | `windows-2022` | x64 |
+
+CI는 자동화된 동작을 검사합니다. Windows 10/11에서의 설치, 대화형 키 입력, 브라우저 열기, 설치된 Codex 연동은 별도 데스크톱 검증이 필요합니다. 수행한 검사와 한계는 [검증 기록](docs/validation.md)에 있습니다.
 
 ```sh
 npm run typecheck

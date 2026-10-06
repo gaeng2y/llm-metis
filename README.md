@@ -10,7 +10,7 @@ Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
                     → Metadata and usage → Local dashboard
 ```
 
-Targets Linux, native Windows, and macOS on Apple Silicon. Requires Node.js 22.15 or later and a Codex CLI installed for the same platform. The gateway builds to plain JavaScript with no external runtime dependencies; native arm64 Node.js runs it on Apple Silicon without Rosetta or a native project build. See the [architecture proposal](docs/architecture.md) for the original design, reference commits, implementation order, and risks, and the [validation record](docs/validation.md) for completed checks and their limits.
+Targets Linux desktop PCs, Apple Silicon Macs, and native Windows 10/11 x64 PCs. Requires Node.js 22.15 or later and a Codex CLI installed for the same platform. The gateway builds to plain JavaScript with no external runtime dependencies; native arm64 Node.js runs it on Apple Silicon without Rosetta or a native project build. See the [architecture proposal](docs/architecture.md) for the original design, reference commits, implementation order, and risks, and the [validation record](docs/validation.md) for completed checks and their limits.
 
 ## Getting started
 
@@ -159,13 +159,15 @@ Baseline still passes through the gateway with both decisions disabled. It prese
 
 ## Validation and scope
 
-The CI workflow is configured for the following platforms with Node.js `22.15.0` and `24`. This matrix has not run yet; Linux and Windows results are pending.
+The CI workflow uses Node.js `22.15.0` and `24` on the following GitHub-hosted runners. `windows-2022` is the Windows Server 2022 test environment; users do not need Windows Server.
 
-| CI platform | Architecture |
-|---|---|
-| Ubuntu 24.04 | x64 |
-| macOS 15 | arm64 (Apple Silicon) |
-| Windows Server 2022 | x64 |
+| User platform | CI runner | Architecture |
+|---|---|---|
+| Linux desktop | `ubuntu-24.04` | x64 |
+| macOS on Apple Silicon | `macos-15` | arm64 |
+| Windows 10/11 | `windows-2022` | x64 |
+
+CI checks automated behavior. Installation, interactive key entry, browser opening, and installed Codex integration on Windows 10/11 require separate desktop validation. See the [validation record](docs/validation.md) for completed checks and their limits.
 
 ```sh
 npm run typecheck

@@ -44,3 +44,13 @@ Manual pseudo-terminal checks confirmed hidden key entry, retaining an existing 
 On macOS arm64, type checking, all 55 fixture tests, and the installed-Codex smoke check passed after the naming changes. A fresh packed installation exported `metis-codex` and the `llm-metis` alias, with no `jev-codex` or unsupported `metis-claude` command. CLI help and configuration help ran from the installed package. No registry publication or live provider call was made.
 
 Regression checks cover `METIS_*` settings with legacy `JEV_*` fallback, explicit canonical precedence including blank values, Windows environment casing, the `metis` Codex provider, and private Metis headers. Both current and legacy private header prefixes are stripped before upstream forwarding. Migration fixtures exercise authenticated discovery of old gateways in explicit and default state directories, matching-port isolation, refusal to launch new sessions through an old gateway, and stopping only the selected daemon when old and new instances coexist. Jev model IDs, evaluator types, metrics, and diagnostics retain their engine-specific names.
+
+## Desktop targets and Windows CI repair · 2026-10-06
+
+The intended user platforms are Linux PCs, Apple Silicon Macs, and native Windows 10/11 x64 PCs. GitHub's `windows-2022` runner is a Windows Server test environment, not a requirement for users.
+
+[CI run 37400431007](https://github.com/gaeng2y/llm-metis/actions/runs/37400431007), at commit `f4631f0`, passed all six jobs: Ubuntu 24.04 x64, macOS 15 arm64, and Windows Server 2022 x64, each with Node 22.15.0 and 24. Every job passed installation, type checking, and all 55 fixture tests.
+
+Windows verification exposed two issues: the ACL probe inherited incompatible PowerShell module paths, and disabling permission inheritance left existing explicit grants in place. The probe now isolates Windows PowerShell's module path and fails immediately on inspection errors. Private-file creation replaces the DACL with a protected current-user-only rule before writing data. The native lifecycle test verifies the exact resulting permissions and uses a path containing Korean text, spaces, an apostrophe, and an ampersand.
+
+These CI results establish automated Linux/macOS/Windows behavior. Installation, interactive key entry, browser opening, and installed Codex integration on Windows 10/11 still require separate desktop validation. No live provider credentials or paid inference were used.

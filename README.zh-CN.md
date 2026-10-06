@@ -10,7 +10,7 @@ Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
                     → 元数据与用量 → 本地仪表盘
 ```
 
-面向 Linux、原生 Windows 和 Apple Silicon macOS。需要 Node.js 22.15 或更高版本，以及为同一平台安装的 Codex CLI。网关编译为无外部运行时依赖的 JavaScript，因此在 Apple Silicon 上使用原生 arm64 Node.js 即可运行，无需 Rosetta 或原生项目构建。最初的设计、参考提交、实现顺序和风险见[架构提案](docs/architecture.md)；已完成的检查及其局限见[验证记录](docs/validation.md)。这两份文档以英文提供。
+面向 Linux 桌面 PC、Apple Silicon Mac 和原生 Windows 10/11 x64 PC。需要 Node.js 22.15 或更高版本，以及为同一平台安装的 Codex CLI。网关编译为无外部运行时依赖的 JavaScript，因此在 Apple Silicon 上使用原生 arm64 Node.js 即可运行，无需 Rosetta 或原生项目构建。最初的设计、参考提交、实现顺序和风险见[架构提案](docs/architecture.md)；已完成的检查及其局限见[验证记录](docs/validation.md)。这两份文档以英文提供。
 
 ## 快速开始
 
@@ -159,13 +159,15 @@ baseline 仍然经过网关，只是禁用了两种决策。它保留请求中�
 
 ## 验证与范围
 
-CI 配置为在以下平台上使用 Node.js `22.15.0` 和 `24`。该矩阵尚未运行，Linux 和 Windows 的结果仍待验证。
+CI 在以下 GitHub 托管运行器上使用 Node.js `22.15.0` 和 `24`。`windows-2022` 表示 Windows Server 2022 测试环境，用户不需要 Windows Server。
 
-| CI 平台 | 架构 |
-|---|---|
-| Ubuntu 24.04 | x64 |
-| macOS 15 | arm64 (Apple Silicon) |
-| Windows Server 2022 | x64 |
+| 用户平台 | CI 运行器 | 架构 |
+|---|---|---|
+| Linux 桌面 | `ubuntu-24.04` | x64 |
+| Apple Silicon macOS | `macos-15` | arm64 |
+| Windows 10/11 | `windows-2022` | x64 |
+
+CI 检查自动化行为。Windows 10/11 上的安装、交互式密钥输入、浏览器打开和已安装 Codex 的集成需要单独进行桌面验证。已完成的检查及其局限见[验证记录](docs/validation.md)。
 
 ```sh
 npm run typecheck

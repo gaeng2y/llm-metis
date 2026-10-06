@@ -10,7 +10,7 @@ Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
                     → メタデータ・使用量 → ローカルダッシュボード
 ```
 
-Linux、ネイティブ Windows、Apple Silicon 搭載 macOS を対象としています。Node.js 22.15 以降と、同じプラットフォーム用にインストールした Codex CLI が必要です。ゲートウェイは外部のランタイム依存関係がない JavaScript にビルドされるため、Apple Silicon ではネイティブ arm64 Node.js で実行でき、Rosetta やネイティブプロジェクトのビルドは不要です。当初の設計、参照コミット、実装順序、リスクは[設計提案](docs/architecture.md)、実施済みの確認とその限界は[検証記録](docs/validation.md)を参照してください。これらの文書は英語です。
+Linux デスクトップ PC、Apple Silicon 搭載 Mac、ネイティブ Windows 10/11 x64 PC を対象としています。Node.js 22.15 以降と、同じプラットフォーム用にインストールした Codex CLI が必要です。ゲートウェイは外部のランタイム依存関係がない JavaScript にビルドされるため、Apple Silicon ではネイティブ arm64 Node.js で実行でき、Rosetta やネイティブプロジェクトのビルドは不要です。当初の設計、参照コミット、実装順序、リスクは[設計提案](docs/architecture.md)、実施済みの確認とその限界は[検証記録](docs/validation.md)を参照してください。これらの文書は英語です。
 
 ## はじめに
 
@@ -159,13 +159,15 @@ baseline もゲートウェイを経由しますが、両方の判断を無効�
 
 ## 検証と対応範囲
 
-CI は以下のプラットフォームで Node.js `22.15.0` と `24` を使う構成です。このマトリックスはまだ実行しておらず、Linux と Windows の結果は確認待ちです。
+CI は以下の GitHub ホストランナーで Node.js `22.15.0` と `24` を使用します。`windows-2022` は Windows Server 2022 のテスト環境を表し、ユーザーに Windows Server は必要ありません。
 
-| CI プラットフォーム | アーキテクチャ |
-|---|---|
-| Ubuntu 24.04 | x64 |
-| macOS 15 | arm64 (Apple Silicon) |
-| Windows Server 2022 | x64 |
+| ユーザーのプラットフォーム | CI ランナー | アーキテクチャ |
+|---|---|---|
+| Linux デスクトップ | `ubuntu-24.04` | x64 |
+| Apple Silicon 搭載 macOS | `macos-15` | arm64 |
+| Windows 10/11 | `windows-2022` | x64 |
+
+CI は自動化された動作を検証します。Windows 10/11 でのインストール、対話式のキー入力、ブラウザー起動、インストール済み Codex との連携には、別途デスクトップでの検証が必要です。実施済みの確認とその限界は[検証記録](docs/validation.md)を参照してください。
 
 ```sh
 npm run typecheck
