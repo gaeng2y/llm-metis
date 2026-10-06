@@ -56,39 +56,34 @@ test('dashboard openers preserve the URL and use absolute Windows system paths',
   assert.equal(launch.args[1],url);
 });
 
-test('Windows grants only the current SID access before writing private contents',async t=>{
+test('Windows waits for permission setup before writing private contents',async t=>{
   const dir=await mkdtemp(join(tmpdir(),'metis private '));t.after(()=>rm(dir,{recursive:true,force:true}));
   const path=join(dir,'instance.json');
-  const sid='S-1-5-21-100-200-300-1001';
   const calls=[];
   await writePrivateFile(path,'private-test-token','win32',async(file,argv,options)=>{
     assert.equal(await readFile(path,'utf8'),'');
     assert.ok(win32.isAbsolute(file));
-    assert.deepEqual(options,{windowsHide:true});
-    calls.push({file:win32.basename(file),argv});
-    return {stdout:`"test-user","${sid}"\r\n`,stderr:''};
+    assert.equal(options.windowsHide,true);
+    assert.equal(options.env.METIS_PRIVATE_FILE,path);
+    assert.ok(options.timeout>0);
+    assert.deepEqual(argv.slice(0,3),['-NoProfile','-NonInteractive','-Command']);
+    assert.ok(!argv.join(' ').includes(path));
+    assert.ok(!argv.join(' ').includes('private-test-token'));
+    calls.push(win32.basename(file));
+    return {stdout:'',stderr:''};
   });
-  assert.deepEqual(calls,[
-    {file:'whoami.exe',argv:['/user','/fo','csv','/nh']},
-    {file:'icacls.exe',argv:[path,'/inheritance:r','/grant:r',`*${sid}:F`]},
-  ]);
+  assert.deepEqual(calls,['powershell.exe']);
   assert.equal(await readFile(path,'utf8'),'private-test-token');
 });
 
 test('Windows permission failures remove the empty file without writing private contents',async t=>{
   const dir=await mkdtemp(join(tmpdir(),'metis private failure '));t.after(()=>rm(dir,{recursive:true,force:true}));
-  for(const behavior of ['whoami-error','missing-sid','acl-error']){
-    const path=join(dir,`${behavior}.json`);
-    const calls=[];
-    await assert.rejects(writePrivateFile(path,'private-test-token','win32',async(file)=>{
-      assert.equal(await readFile(path,'utf8'),'');
-      calls.push(win32.basename(file));
-      if(behavior==='whoami-error'||win32.basename(file)==='icacls.exe')throw Error('permission setup failed');
-      return {stdout:behavior==='missing-sid'?'no user SID':'S-1-5-21-100-200-300-1001',stderr:''};
-    }),/permission setup failed|Cannot determine the current Windows user/);
-    assert.deepEqual(calls,behavior==='acl-error'?['whoami.exe','icacls.exe']:['whoami.exe']);
-    await assert.rejects(stat(path),{code:'ENOENT'});
-  }
+  const path=join(dir,'failed.json');
+  await assert.rejects(writePrivateFile(path,'private-test-token','win32',async()=>{
+    assert.equal(await readFile(path,'utf8'),'');
+    throw Error('permission setup failed');
+  }),/permission setup failed/);
+  await assert.rejects(stat(path),{code:'ENOENT'});
 });
 
 test('private file creation is exclusive and preserves existing contents',async t=>{

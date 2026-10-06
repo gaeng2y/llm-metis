@@ -25,7 +25,7 @@ test('authentication selection and ephemeral Codex arguments',async t=>{
 });
 
 test('CLI lifecycle, flags, task metrics, and unchanged Codex config',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'metis cli '));
+  const dir=await mkdtemp(join(tmpdir(),"metis cli 한글 ' & "));
   const portServer=createServer();portServer.listen(0,'127.0.0.1');await once(portServer,'listening');
   const port=portServer.address().port;await new Promise(r=>portServer.close(r));
   const fake=join(dir,'fake-codex.mjs');

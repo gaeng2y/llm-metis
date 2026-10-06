@@ -43,10 +43,16 @@ export async function writePrivateFile(path: string, data: string, platform = pr
   const file = await open(path, 'wx', 0o600);
   try {
     if (platform === 'win32') {
-      const { stdout } = await run(windowsSystem('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
-      const sid = stdout.match(/S-1-\d+(?:-\d+)+/)?.[0];
-      if (!sid) throw Error('Cannot determine the current Windows user');
-      await run(windowsSystem('icacls.exe'), [path, '/inheritance:r', '/grant:r', `*${sid}:F`], { windowsHide: true });
+      // Replace the entire DACL: disabling inheritance alone leaves explicit grants behind.
+      const command = `$ErrorActionPreference='Stop';
+$acl=[System.Security.AccessControl.FileSecurity]::new();
+$acl.SetAccessRuleProtection($true,$false);
+$acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.WindowsIdentity]::GetCurrent().User,'FullControl','Allow'));
+[System.IO.File]::SetAccessControl($env:METIS_PRIVATE_FILE,$acl);`;
+      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'METIS_PRIVATE_FILE'));
+      await run(windowsSystem('WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', command], {
+        env: { ...env, METIS_PRIVATE_FILE: path }, windowsHide: true, timeout: 10000,
+      });
     }
     await file.writeFile(data);
     await file.close();
