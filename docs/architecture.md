@@ -1,8 +1,8 @@
 # Architecture proposal and implementation plan
 
-Recorded before implementation, 2026-09-23, under the working names `jev-control` / `jev-codex`. Current package: `llm-metis`; command: `metis-codex` (`llm-metis` alias). Jev names refer to the decision engine, its provider models, and evaluator metrics.
+Recorded before implementation, 2026-09-23, under the working names `jev-control` / `jev-codex`. Current package: `llm-metis`; commands: `metis-codex` (`llm-metis` alias) and `metis-claude`. Jev names refer to the decision engine, its provider models, and evaluator metrics.
 
-The implemented client integration is Codex's Responses API. Claude Code integration and a `metis-claude` command are not implemented.
+The client integrations use Codex's Responses API and Claude Code's Anthropic Messages API. Bare `metis-codex` or `metis-claude` starts the shared gateway automatically and launches the selected client interactively in the same terminal and working directory. Both commands share configuration, routing controls, and the dashboard; each client retains its own model authentication and tool execution responsibilities.
 
 ## Evidence
 
@@ -13,7 +13,7 @@ The implemented client integration is Codex's Responses API. Claude Code integra
 ## Flow and responsibility
 
 ```text
-Codex HTTP/SSE request
+Codex Responses / Claude Messages HTTP/SSE request
   → gateway: bounded body, original bytes retained, auth stays in transport
   → state: bounded public text, current task, declared tools, tool history
   → DecisionEngine.decide(state, optional abort signal)
@@ -25,11 +25,15 @@ Codex HTTP/SSE request
 
 `DecisionEngine` is the single requested replaceable interface. HTTP transport, provider protocol, extraction, policy, metrics, CLI and dashboard remain separate modules. No lease abstraction, model-routing framework, or MCP server is introduced.
 
+The Claude launcher passes a private temporary `--settings` file containing an authenticated loopback `ANTHROPIC_BASE_URL`, while preserving user settings, login files, and custom authentication headers. The URL's `/anthropic/<token>/<taskId>` prefix authenticates only Messages and token-count requests; the control API still requires the private header. The gateway strips this prefix before forwarding `/v1/messages` or `/v1/messages/count_tokens` upstream. Messages requests are evaluated; token-count requests are forwarded unchanged. Anthropic `x-api-key`, `Authorization`, and version/beta headers pass through. No private token is added to custom headers, and no dummy model key is injected. `METIS_ANTHROPIC_BASE_URL` selects the upstream, falling back to the daemon's inherited `ANTHROPIC_BASE_URL`, then `https://api.anthropic.com`. Bedrock, Vertex, and Foundry modes are unsupported and detected configurations are rejected. Managed settings can override routing; Metis does not override organizational policy, and enterprise integration needs live validation.
+
+`METIS_CODEX_BIN` and `METIS_CLAUDE_BIN` select the client executables. Windows supports native executables and standard npm shims by resolving their official JavaScript entry points without a shell. `metis-claude` uses `@anthropic-ai/claude-code/cli.js` for the npm installation.
+
 ## Proposed structure
 
 ```text
-bin/metis-codex.mjs
-src/{config,decision,state,jev,routing,gateway,metrics,cli}.ts
+bin/{metis-codex,metis-claude}.mjs
+src/{config,decision,state,anthropic,jev,routing,gateway,metrics,cli}.ts
 src/dashboard.html
 test/{routing,jev,gateway,cli}.test.mjs
 docs/architecture.md
@@ -41,10 +45,12 @@ README.md
 1. Write deterministic confidence/failure/preservation tests before provider use.
 2. Implement types, bounded extraction, one-call Jev adapter and routing policy.
 3. Implement HTTP/SSE forwarding, cancellation, usage collection and rewrite fallback.
-4. Implement local lifecycle commands, process-only Codex overrides and dashboard comparison.
+4. Implement local lifecycle commands, per-process client overrides and dashboard comparison.
 5. Typecheck and run unit/integration/CLI tests against local fake providers. Inspect the dashboard.
 
 ## Policy
+
+The Responses-specific rules below apply to Codex. Claude Messages shares the independent confidence gates, evaluator deadline, cancellation, and original-body fallback. Claude effort is rewritten only when `output_config.effort` is already present. Tool forcing respects model/thinking restrictions and explicit caller choices; unsupported requests pass through. Claude does not synthesize direct tool-call responses.
 
 - Tool and effort routing have independent enable flags and confidence thresholds. Routing off makes no Jev call. Missing provider credentials and provider failure preserve the model request.
 - Honor any explicit caller `tool_choice` other than `auto` (including `required`); effort may still change independently.
@@ -57,11 +63,11 @@ README.md
 ## Risks and unknowns
 
 - Backend tool-choice support varies. A rejected rewrite also loses its effort change on the fallback request; metrics distinguish proposal from application.
-- Closed-set certainty is not proof of semantic correctness. Direct is opt-in and deliberately narrow; Codex retains its normal execution/approval responsibilities.
+- Closed-set certainty is not proof of semantic correctness. Direct is opt-in and deliberately narrow; each client retains its normal execution/approval responsibilities.
 - Bounded public context can miss relevant earlier evidence; encrypted reasoning and image/file payloads are excluded. Relevant public excerpts and tool definitions ARE sent to the configured Jev provider. Local-only describes the gateway, not Jev inference.
 - One evaluator round trip per eligible generation adds latency. No claim of savings until comparable workloads finish successfully in all four modes.
 - HTTP effort changes do not establish prefix preservation or Ares equivalence. Supported effort levels depend on the selected model. No model substitution is permitted.
-- HTTP/SSE is the MVP transport. The launcher disables provider WebSocket support for that invocation. Compaction is forwarded without control decisions.
-- Subscription authentication is passed through, not refreshed or read by the gateway. CLI reads only login mode metadata to select a default upstream. Real subscription/API acceptance still needs live testing.
+- HTTP/SSE is the MVP transport. The Codex launcher disables provider WebSocket support for that invocation. Compaction is forwarded without control decisions.
+- Subscription authentication is passed through, not refreshed or read by the gateway. The Codex launcher reads only login mode metadata to select its default upstream. Real subscription/API acceptance and model compatibility for both clients still need live testing.
 - Dashboard comparisons are observational, not randomized experiments. Missing usage stays unknown. Per-request latency includes complete stream duration; wrapper task duration includes tool/user wait time. Direct inference uses zero upstream tokens and separately reports evaluator usage.
 - Metrics are bounded in memory and reset on restart. No persistence/database, native patch, leases, local Laya engine, or MCP grouping in this phase.

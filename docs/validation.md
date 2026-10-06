@@ -54,3 +54,13 @@ The intended user platforms are Linux PCs, Apple Silicon Macs, and native Window
 Windows verification exposed two issues: the ACL probe inherited incompatible PowerShell module paths, and disabling permission inheritance left existing explicit grants in place. The probe now isolates Windows PowerShell's module path and fails immediately on inspection errors. Private-file creation replaces the DACL with a protected current-user-only rule before writing data. The native lifecycle test verifies the exact resulting permissions and uses a path containing Korean text, spaces, an apostrophe, and an ampersand.
 
 These CI results establish automated Linux/macOS/Windows behavior. Installation, interactive key entry, browser opening, and installed Codex integration on Windows 10/11 still require separate desktop validation. No live provider credentials or paid inference were used.
+
+## Interactive Codex and Claude launchers · 2026-10-06
+
+On macOS arm64, type checking and all 71 fixture tests passed. Bare `metis-codex` and `metis-claude` preserve the working directory, interactive arguments, authentication, and terminal streams. A separate pseudo-terminal check confirmed that stdin, stdout, and stderr remain TTYs for both registered commands. `npm link` registered both launchers locally.
+
+Both `npm run test:codex` and `npm run test:claude` passed against installed clients with isolated configuration, fabricated credentials, and local evaluator/model servers. Each observed one Jev call, a high-to-low effort change, and a completed SSE response. The Claude smoke check uses `--bare` to avoid user hooks, keychain reads, and background setup; these checks do not establish live subscription acceptance or provider compatibility.
+
+Messages fixtures cover separate upstream routing, unchanged model authentication and beta headers, conservative thinking/tool constraints, exact original-byte retries, streaming errors and completion, cache usage, and token-count passthrough. CLI fixtures verify private temporary settings and cleanup, preserved explicit settings and custom headers, cloud-backend rejection, and refusal to launch through an older daemon. Claude's local credential is tied to its loopback URL and is removed before upstream forwarding; URL authentication cannot access management endpoints.
+
+The new Claude integration has not yet run on native Windows/Linux CI. Managed routing policies, real Windows 10/11 desktop interaction, and live model quality/cost remain separate validation work.
