@@ -11,6 +11,7 @@ import { createGateway } from './gateway.js';
 import { object } from './decision.js';
 import { cohort } from './metrics.js';
 import { codexLaunch, dashboardLaunch, writePrivateFile } from './platform.js';
+import { configure, configuredEnv, configPath } from './configure.js';
 
 interface Instance { id: string; token: string; port: number; pid: number; legacy?: boolean }
 const stateDir = () => resolve(process.env.METIS_STATE_DIR ?? join(homedir(), '.local', 'state', 'llm-metis'));
@@ -65,7 +66,8 @@ export function codexArgs(url: string): string[] {
   return Object.entries(settings).flatMap(([key, value]) => ['-c', `${key}=${value}`]);
 }
 async function serve() {
-  const config = loadConfig({ ...process.env, UPSTREAM_BASE_URL: await detectUpstream() });
+  const env = await configuredEnv();
+  const config = loadConfig({ ...env, UPSTREAM_BASE_URL: await detectUpstream(env) });
   await mkdir(stateDir(), { recursive: true, mode: 0o700 });
   const instance: Instance = { id: randomUUID(), token: randomBytes(32).toString('hex'), port: config.port, pid: process.pid };
   let stopping = false;
@@ -111,6 +113,9 @@ async function ensureStarted() {
   } finally { await rmdir(lock); }
 }
 const help = `metis-codex [-- <codex arguments>]
+  configure               Select provider and save an API key (hidden input)
+  configuration           Alias for configure
+  config-path             Show the user configuration file path
   --start                 Start local background gateway
   --stop                  Gracefully stop this gateway
   --status                Show status without starting
@@ -121,13 +126,25 @@ const help = `metis-codex [-- <codex arguments>]
   --serve                 Run in foreground (diagnostics)
 
 Uses current Codex authentication and per-process configuration overrides.
-Set METIS_PROVIDER and its API key in the environment or local .env.
+Run metis-codex configure once; settings work from any project directory.
+Nonempty METIS_PROVIDER and API keys in the environment/local .env override saved settings.
 METIS_STATE_DIR and METIS_PORT select an independent local instance.
 No arguments launches Codex; the gateway remains running until --stop.`;
 
 export async function main(args = process.argv.slice(2)) {
   Object.assign(process.env, normalizedEnv());
   if (args[0] === '--help' || args[0] === '-h') { console.log(help); return; }
+  if (args[0] === 'configure' || args[0] === 'configuration') {
+    if (await configure(args.slice(1))) {
+      if (await running()) console.log('A gateway is already running. After its tasks finish, apply settings with metis-codex --stop then metis-codex --start. Restarting clears dashboard metrics.');
+      else console.log('Run metis-codex from your project directory to start Codex.');
+    }
+    return;
+  }
+  if (args[0] === 'config-path') {
+    if (args.length !== 1) throw Error('Usage: metis-codex config-path');
+    console.log(configPath()); return;
+  }
   if (args[0] === '--serve') { await serve(); return; }
   if (args[0] === '--status') {
     const live = await running();
