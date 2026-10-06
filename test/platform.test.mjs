@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
-import { codexLaunch, dashboardLaunch, writePrivateFile } from '../dist/platform.js';
+import { codexLaunch, claudeLaunch, dashboardLaunch, writePrivateFile } from '../dist/platform.js';
 
 const args=['exec','-c','model_reasoning_effort="high"','파일 "읽기" & | %PATH% $(echo untouched)'];
 const windowsFiles=(...paths)=>{
@@ -43,6 +43,27 @@ test('Windows rejects unrecognized batch shims and missing executables',()=>{
     assert.throws(()=>codexLaunch(binary,args,{},'win32',windowsFiles(binary)),/Unsupported Codex command shim/);
   }
   assert.throws(()=>codexLaunch('codex',args,{PATH:String.raw`C:\empty`},'win32',()=>false),/Codex executable not found/);
+});
+
+test('Claude preserves arguments with JavaScript, native Windows, and standard npm launchers',()=>{
+  for(const platform of ['darwin','linux','win32']){
+    assert.deepEqual(claudeLaunch('claude-fixture.mjs',args,{},platform),{file:process.execPath,args:['claude-fixture.mjs',...args]});
+  }
+  const native=String.raw`C:\Users\Test User\.local\bin\claude.exe`;
+  assert.deepEqual(claudeLaunch('claude',args,{Path:win32.dirname(native)},'win32',windowsFiles(native)),{file:native,args});
+  for(const [dir,script] of [
+    [String.raw`C:\Users\Test User\AppData\Roaming\npm`,'node_modules/@anthropic-ai/claude-code/cli.js'],
+    [String.raw`D:\work space\node_modules\.bin`,'../@anthropic-ai/claude-code/cli.js'],
+  ]){
+    const shim=win32.join(dir,'claude.cmd');
+    const entry=win32.join(dir,script);
+    const exists=windowsFiles(shim,entry);
+    assert.deepEqual(claudeLaunch('claude',args,{Path:`"${dir}"`},'win32',exists),{file:process.execPath,args:[entry,...args]});
+    assert.deepEqual(claudeLaunch(shim,args,{},'win32',exists),{file:process.execPath,args:[entry,...args]});
+  }
+  const unsupported=String.raw`C:\tools\wrapper.cmd`;
+  assert.throws(()=>claudeLaunch(unsupported,args,{},'win32',windowsFiles(unsupported)),/Unsupported Claude Code command shim/);
+  assert.throws(()=>claudeLaunch('claude',args,{PATH:String.raw`C:\empty`},'win32',()=>false),/Claude Code executable not found/);
 });
 
 test('dashboard openers preserve the URL and use absolute Windows system paths',()=>{
