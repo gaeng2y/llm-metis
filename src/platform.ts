@@ -27,10 +27,10 @@ export function codexLaunch(binary: string, args: string[], env = process.env, p
           if (exists(entry)) return { file: process.execPath, args: [entry, ...args] };
         }
       }
-      throw Error('Unsupported Codex command shim. Set JEV_CODEX_BIN to codex.exe or its JavaScript entry point.');
+      throw Error('Unsupported Codex command shim. Set METIS_CODEX_BIN to codex.exe or its JavaScript entry point.');
     }
   }
-  throw Error('Codex executable not found. Install Codex or set JEV_CODEX_BIN.');
+  throw Error('Codex executable not found. Install Codex or set METIS_CODEX_BIN.');
 }
 
 export function dashboardLaunch(url: string, platform = process.platform): Launch {

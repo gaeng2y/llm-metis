@@ -20,7 +20,7 @@ async function setup(t, handler, opts = {}) {
   return { ...gateway, url: `http://127.0.0.1:${gateway.server.address().port}` };
 }
 async function read(req) { const chunks = []; for await (const c of req) chunks.push(c); return Buffer.concat(chunks).toString(); }
-const headers = { 'x-jev-token': token, authorization: 'Bearer existing-codex-login', 'chatgpt-account-id': 'account-1', 'content-type': 'application/json' };
+const headers = { 'x-metis-token': token, authorization: 'Bearer existing-codex-login', 'chatgpt-account-id': 'account-1', 'content-type': 'application/json' };
 
 test('auth passthrough, unrelated fields, JSON usage and privacy', async t => {
   let received;
@@ -28,12 +28,14 @@ test('auth passthrough, unrelated fields, JSON usage and privacy', async t => {
     received = { headers: req.headers, body: JSON.parse(await read(req)), url: req.url };
     res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ id: 'resp_1', usage }));
   });
-  const response = await fetch(`${gw.url}/v1/responses?x=1`, { method: 'POST', headers, body: JSON.stringify(body) });
+  const privateHeaders = { 'x-metis-task-id': 'metis-private-task', 'x-jev-token': 'legacy-private-token', 'x-jev-task-id': 'legacy-private-task' };
+  const response = await fetch(`${gw.url}/v1/responses?x=1`, { method: 'POST', headers: { ...headers, ...privateHeaders }, body: JSON.stringify(body) });
   assert.equal(response.status, 200); await response.text();
   assert.equal(received.url, '/base/responses?x=1');
   assert.equal(received.headers.authorization, headers.authorization);
   assert.equal(received.headers['chatgpt-account-id'], 'account-1');
-  assert.equal(received.headers['x-jev-token'], undefined);
+  assert.equal(received.headers['x-metis-token'], undefined);
+  for (const name of Object.keys(privateHeaders)) assert.equal(received.headers[name], undefined);
   assert.equal(received.body.reasoning.effort, 'low');
   assert.equal(received.body.input, 'test');
   const event = gw.metrics.snapshot().requests.at(-1);
@@ -82,7 +84,7 @@ test('SSE arrives before completion; multiline and split events yield usage', as
 test('local endpoint requires private token and rejects foreign origins', async t => {
   const gw = await setup(t, (_req, res) => res.end('{}'));
   assert.equal((await fetch(`${gw.url}/control/status`)).status, 401);
-  assert.equal((await fetch(`${gw.url}/control/status`, { headers: { 'x-jev-token': token, origin: 'https://evil.example' } })).status, 403);
+  assert.equal((await fetch(`${gw.url}/control/status`, { headers: { 'x-metis-token': token, origin: 'https://evil.example' } })).status, 403);
   assert.equal((await fetch(`${gw.url}/control/status`, { headers })).status, 200);
   const r = await fetch(`${gw.url}/control/routing`, { method: 'POST', headers, body: JSON.stringify({ toolRouting: false, effortRouting: true }) });
   assert.equal(r.status, 200);
@@ -99,6 +101,7 @@ test('direct JSON/SSE uses no upstream and returns a complete function call', as
     const response = await fetch(`${gw.url}/v1/responses`,{method:'POST',headers,body:JSON.stringify(req)});
     const data = await response.text();
     const result = stream ? data.split('\n').filter(l=>l.startsWith('data: ')).map(l=>JSON.parse(l.slice(6))).at(-1).response : JSON.parse(data);
+    assert.match(result.id,/^resp_metis_/);
     assert.equal(result.status,'completed');assert.equal(result.output[0].name,'read');
     assert.equal(result.output[0].arguments,'{"kind":"brief"}');assert.equal(result.usage.input_tokens,0);
   }

@@ -24,11 +24,11 @@ const server=createServer(async(req,res)=>{
 });
 server.listen(0,'127.0.0.1');await once(server,'listening');
 const picker=createServer();picker.listen(0,'127.0.0.1');await once(picker,'listening');const port=picker.address().port;await new Promise(r=>picker.close(r));
-const env={PATH:process.env.PATH,HOME:dir,CODEX_HOME:dir,JEV_STATE_DIR:join(dir,'state'),JEV_PORT:String(port),UPSTREAM_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,OPENAI_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,OPENROUTER_API_KEY:'test-not-real',JEV_URL:`http://127.0.0.1:${server.address().port}/evaluate`,JEV_CODEX_BIN:process.env.JEV_CODEX_BIN??'codex'};
+const env={PATH:process.env.PATH,HOME:dir,METIS_CONFIG:join(dir,'metis.json'),CODEX_HOME:dir,METIS_STATE_DIR:join(dir,'state'),METIS_PORT:String(port),UPSTREAM_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,OPENAI_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,OPENROUTER_API_KEY:'test-not-real',METIS_URL:`http://127.0.0.1:${server.address().port}/evaluate`,METIS_CODEX_BIN:process.env.METIS_CODEX_BIN??'codex'};
 if(process.platform==='win32')Object.assign(env,{SystemRoot:process.env.SystemRoot,COMSPEC:process.env.COMSPEC,PATHEXT:process.env.PATHEXT,USERPROFILE:dir,LOCALAPPDATA:dir,APPDATA:dir,TEMP:dir,TMP:dir});
 await writeFile(join(dir,'config.toml'),`openai_base_url = "http://127.0.0.1:${server.address().port}/v1"\nchatgpt_base_url = "http://127.0.0.1:${server.address().port}"\n`);
 await writeFile(join(dir,'auth.json'),JSON.stringify({auth_mode:'apikey',OPENAI_API_KEY:'test-not-real'}),{mode:0o600});
-const bin=fileURLToPath(new URL('../bin/jev-codex.mjs',import.meta.url));
+const bin=fileURLToPath(new URL('../bin/metis-codex.mjs',import.meta.url));
 try{
  const pending=exec(process.execPath,[bin,'--','exec','--skip-git-repo-check','--model','gpt-6-astra','-c','model_reasoning_effort="high"','Reply with fixture complete'],{env,cwd:dir,timeout:30000,maxBuffer:1000000});
  pending.child.stdin.end();

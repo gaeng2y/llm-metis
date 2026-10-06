@@ -39,7 +39,7 @@ function equalToken(presented: unknown, token: string): boolean {
 }
 function directResponse(request: JsonObject, direct: NonNullable<RouteResult['direct']>) {
   const item = { type: 'function_call', id: `fc_${randomUUID().replaceAll('-','')}`, call_id: `call_${randomUUID().replaceAll('-','')}`, name: direct.name, arguments: JSON.stringify(direct.arguments), status: 'completed' };
-  const response = { id: `resp_jev_${randomUUID().replaceAll('-','')}`, object: 'response', created_at: Math.floor(Date.now()/1000), status: 'completed', model: request.model,
+  const response = { id: `resp_metis_${randomUUID().replaceAll('-','')}`, object: 'response', created_at: Math.floor(Date.now()/1000), status: 'completed', model: request.model,
     error: null, incomplete_details: null, output: [item], store: false, previous_response_id: null,
     parallel_tool_calls: request.parallel_tool_calls ?? true, tools: request.tools ?? [], tool_choice: request.tool_choice ?? 'auto',
     usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } };
@@ -79,8 +79,8 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'" });
       return res.end(dashboard);
     }
-    if (!equalToken(req.headers['x-jev-token'], token)) return json(res, 401, { error: 'Private local token required' });
-    if (url.pathname === '/control/status' && req.method === 'GET') return json(res, 200, { service: 'jev-control', version: '0.1.0', pid: process.pid, ...routing, upstream: config.upstreamBaseUrl, provider: config.provider, jevConfigured: Boolean(config.jevApiKey), directCalls: config.directCalls });
+    if (!equalToken(req.headers['x-metis-token'], token)) return json(res, 401, { error: 'Private local token required' });
+    if (url.pathname === '/control/status' && req.method === 'GET') return json(res, 200, { service: 'llm-metis', version: '0.1.0', pid: process.pid, ...routing, upstream: config.upstreamBaseUrl, provider: config.provider, jevConfigured: Boolean(config.jevApiKey), directCalls: config.directCalls });
     if (url.pathname === '/control/metrics' && req.method === 'GET') return json(res, 200, metrics.snapshot());
     if (url.pathname === '/control/routing' && req.method === 'POST') {
       const value = parseBody(await readBody(req, 4096));
@@ -127,7 +127,7 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
         const send = (rewrite: boolean) => {
           const headers = new Headers();
           const dropped = new Set([...hop, ...(req.headers.connection ?? '').toLowerCase().split(',').map(v => v.trim()), 'accept-encoding','origin','referer']);
-          for (const [key, value] of Object.entries(req.headers)) if (!dropped.has(key) && !key.startsWith('x-jev-') && !key.startsWith('sec-') && value !== undefined) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
+          for (const [key, value] of Object.entries(req.headers)) if (!dropped.has(key) && !key.startsWith('x-metis-') && !key.startsWith('x-jev-') && !key.startsWith('sec-') && value !== undefined) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
           if (rewrite) headers.delete('content-encoding');
           return fetch(`${config.upstreamBaseUrl}${path}${url.search}`, { method: req.method, headers,
             body: rewrite ? rewrittenBody : bytes ? new Uint8Array(bytes) : undefined, signal: abort.signal, redirect: 'error' });
@@ -162,7 +162,7 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
       else if (!res.writableEnded) res.destroy();
     } finally {
       if (isGeneration) {
-        const task = req.headers['x-jev-task-id'];
+        const task = req.headers['x-metis-task-id'];
         metrics.add({ id: randomUUID(), time: new Date().toISOString(), cohort: cohort(cfg), model: typeof parsed?.model === 'string' ? parsed.model.slice(0, 100) : '',
           taskId: typeof task === 'string' && /^[\w-]{1,80}$/.test(task) ? task : undefined,
           ...routeMetric(route, cfg), ...observer?.usage, modelLatencyMs, requestLatencyMs: performance.now() - started, status, outcome });

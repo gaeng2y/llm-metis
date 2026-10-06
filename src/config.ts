@@ -9,6 +9,17 @@ export interface Config {
   toolMinConfidence: number; effortMinConfidence: number; timeoutMs: number;
   toolRouting: boolean; effortRouting: boolean; directCalls: boolean;
 }
+/** Keep existing installations working; explicit Metis values always win. */
+export function normalizedEnv(env: NodeJS.ProcessEnv = process.env, platform = process.platform): NodeJS.ProcessEnv {
+  const result = Object.fromEntries(Object.entries(env).map(([key, value]) => [platform === 'win32' ? key.toUpperCase() : key, value]));
+  for (const [key, value] of Object.entries(result)) {
+    if (key.startsWith('JEV_')) {
+      const canonical = `METIS_${key.slice(4)}`;
+      if (result[canonical] === undefined) result[canonical] = value;
+    }
+  }
+  return result;
+}
 export function endpoint(value: string, name: string): string {
   const u = new URL(value);
   if (u.username || u.password || u.hash || u.search || (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['127.0.0.1','localhost','[::1]'].includes(u.hostname)))) {
@@ -17,7 +28,7 @@ export function endpoint(value: string, name: string): string {
   return u.href.replace(/\/+$/, '');
 }
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  if (process.platform === 'win32') env = Object.fromEntries(Object.entries(env).map(([key, value]) => [key.toUpperCase(), value]));
+  env = normalizedEnv(env);
   const toggle = (key: string, fallback: boolean) => {
     if (!env[key]) return fallback;
     if (!['on','off'].includes(env[key]!)) throw Error(`${key} must be on or off`);
@@ -28,19 +39,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) throw Error(`Invalid ${key}`);
     return value;
   };
-  const provider = env.JEV_PROVIDER?.trim().toLowerCase() || 'openrouter';
-  if (!Object.hasOwn(PROVIDERS, provider)) throw Error('JEV_PROVIDER must be openrouter, vercel, or typesafe');
+  const provider = env.METIS_PROVIDER?.trim().toLowerCase() || 'openrouter';
+  if (!Object.hasOwn(PROVIDERS, provider)) throw Error('METIS_PROVIDER must be openrouter, vercel, or typesafe');
   const p = PROVIDERS[provider as Provider];
   return {
-    port: number('JEV_PORT', 8791, 1, 65535, true),
+    port: number('METIS_PORT', 8791, 1, 65535, true),
     upstreamBaseUrl: endpoint(env.UPSTREAM_BASE_URL ?? 'https://api.openai.com/v1', 'UPSTREAM_BASE_URL'),
-    provider: provider as Provider, jevUrl: endpoint(env.JEV_URL ?? p.url, 'JEV_URL'),
-    jevModel: env.JEV_MODEL ?? p.model, jevApiKey: env[p.key]?.trim() ?? '',
-    toolMinConfidence: number('JEV_TOOL_MIN_CONFIDENCE', .85, 0, 1),
-    effortMinConfidence: number('JEV_EFFORT_MIN_CONFIDENCE', .85, 0, 1),
-    timeoutMs: number('JEV_TIMEOUT_MS', 2000, 1, 60000, true),
-    toolRouting: toggle('JEV_ROUTING', true) && toggle('JEV_TOOL_ROUTING', true),
-    effortRouting: toggle('JEV_ROUTING', true) && toggle('JEV_EFFORT_ROUTING', true),
-    directCalls: toggle('JEV_DIRECT_CALLS', false),
+    provider: provider as Provider, jevUrl: endpoint(env.METIS_URL ?? p.url, 'METIS_URL'),
+    jevModel: env.METIS_MODEL ?? p.model, jevApiKey: env[p.key]?.trim() ?? '',
+    toolMinConfidence: number('METIS_TOOL_MIN_CONFIDENCE', .85, 0, 1),
+    effortMinConfidence: number('METIS_EFFORT_MIN_CONFIDENCE', .85, 0, 1),
+    timeoutMs: number('METIS_TIMEOUT_MS', 2000, 1, 60000, true),
+    toolRouting: toggle('METIS_ROUTING', true) && toggle('METIS_TOOL_ROUTING', true),
+    effortRouting: toggle('METIS_ROUTING', true) && toggle('METIS_EFFORT_ROUTING', true),
+    directCalls: toggle('METIS_DIRECT_CALLS', false),
   };
 }

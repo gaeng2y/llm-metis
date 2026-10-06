@@ -1,18 +1,18 @@
 {
-  "name": "jev-control",
+  "name": "llm-metis",
   "version": "0.1.0",
   "private": true,
   "description": "Experimental local tool and reasoning control gateway for Codex",
   "type": "module",
   "engines": { "node": ">=22.15" },
-  "bin": { "jev-codex": "bin/jev-codex.mjs" },
+  "bin": { "llm-metis": "bin/metis-codex.mjs", "metis-codex": "bin/metis-codex.mjs" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test \"test/*.test.mjs\"",
     "test:codex": "npm run build && node test/codex-smoke.mjs",
-    "start": "node bin/jev-codex.mjs --start",
-    "codex": "node bin/jev-codex.mjs"
+    "start": "node bin/metis-codex.mjs --start",
+    "codex": "node bin/metis-codex.mjs"
   },
   "devDependencies": { "@types/node": "^22.15.0", "typescript": "^5.8.3" }
 }

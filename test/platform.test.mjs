@@ -57,7 +57,7 @@ test('dashboard openers preserve the URL and use absolute Windows system paths',
 });
 
 test('Windows grants only the current SID access before writing private contents',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'jev private '));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const dir=await mkdtemp(join(tmpdir(),'metis private '));t.after(()=>rm(dir,{recursive:true,force:true}));
   const path=join(dir,'instance.json');
   const sid='S-1-5-21-100-200-300-1001';
   const calls=[];
@@ -76,7 +76,7 @@ test('Windows grants only the current SID access before writing private contents
 });
 
 test('Windows permission failures remove the empty file without writing private contents',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'jev private failure '));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const dir=await mkdtemp(join(tmpdir(),'metis private failure '));t.after(()=>rm(dir,{recursive:true,force:true}));
   for(const behavior of ['whoami-error','missing-sid','acl-error']){
     const path=join(dir,`${behavior}.json`);
     const calls=[];
@@ -92,7 +92,7 @@ test('Windows permission failures remove the empty file without writing private 
 });
 
 test('private file creation is exclusive and preserves existing contents',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'jev private existing '));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const dir=await mkdtemp(join(tmpdir(),'metis private existing '));t.after(()=>rm(dir,{recursive:true,force:true}));
   const path=join(dir,'instance.json');
   await writePrivateFile(path,'original','linux',async()=>{throw Error('POSIX must not run permission commands');});
   if(process.platform!=='win32')assert.equal((await stat(path)).mode&0o777,0o600);
