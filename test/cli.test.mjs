@@ -43,8 +43,10 @@ test('CLI lifecycle, flags, task metrics, and unchanged Codex config',async t=>{
   const info=JSON.parse(await readFile(statePath,'utf8'));
   if(process.platform==='win32'){
     const powershell=win32.join(process.env.SystemRoot??'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
-    const command='$acl=Get-Acl -LiteralPath $env:METIS_TEST_STATE; [pscustomobject]@{protected=$acl.AreAccessRulesProtected; currentSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; rules=@($acl.Access | ForEach-Object { [pscustomobject]@{sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value; inherited=$_.IsInherited; type=[string]$_.AccessControlType; rights=[string]$_.FileSystemRights} })} | ConvertTo-Json -Depth 4 -Compress';
-    const acl=JSON.parse((await exec(powershell,['-NoProfile','-NonInteractive','-Command',command],{env:{...env,METIS_TEST_STATE:statePath},timeout:10000})).stdout);
+    // Windows PowerShell 5.1 must rebuild module paths inherited from PowerShell 7 via Node.
+    const probeEnv=Object.fromEntries(Object.entries({...env,METIS_TEST_STATE:statePath}).filter(([key])=>key.toUpperCase()!=='PSMODULEPATH'));
+    const command='$ErrorActionPreference="Stop"; $acl=Get-Acl -LiteralPath $env:METIS_TEST_STATE; [pscustomobject]@{protected=$acl.AreAccessRulesProtected; currentSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; rules=@($acl.Access | ForEach-Object { [pscustomobject]@{sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value; inherited=$_.IsInherited; type=[string]$_.AccessControlType; rights=[string]$_.FileSystemRights} })} | ConvertTo-Json -Depth 4 -Compress';
+    const acl=JSON.parse((await exec(powershell,['-NoProfile','-NonInteractive','-Command',command],{env:probeEnv,timeout:10000})).stdout);
     assert.equal(acl.protected,true);
     assert.deepEqual(acl.rules,[{sid:acl.currentSid,inherited:false,type:'Allow',rights:'FullControl'}]);
   }else assert.equal((await stat(statePath)).mode&0o777,0o600);
