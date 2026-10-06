@@ -6,7 +6,9 @@
   "type": "module",
   "engines": { "node": ">=22.15" },
   "bin": { "llm-metis": "bin/metis-codex.mjs", "metis-codex": "bin/metis-codex.mjs" },
+  "files": ["bin/", "dist/", "src/dashboard.html", "docs/", "README*.md", ".env.example", "src/*.ts", "tsconfig.json"],
   "scripts": {
+    "prepare": "npm run build",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test \"test/*.test.mjs\"",
