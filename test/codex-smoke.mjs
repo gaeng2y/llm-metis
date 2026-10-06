@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const exec=promisify(execFile);
-const dir=await mkdtemp(join(tmpdir(),'metis-codex-smoke-'));
+const dir=await mkdtemp(join(tmpdir(),'metis codex smoke '));
 const calls=[];
 const usage={input_tokens:20,output_tokens:3,total_tokens:23,input_tokens_details:{cached_tokens:0},output_tokens_details:{reasoning_tokens:0}};
 const server=createServer(async(req,res)=>{
@@ -24,7 +24,8 @@ const server=createServer(async(req,res)=>{
 });
 server.listen(0,'127.0.0.1');await once(server,'listening');
 const picker=createServer();picker.listen(0,'127.0.0.1');await once(picker,'listening');const port=picker.address().port;await new Promise(r=>picker.close(r));
-const env={PATH:process.env.PATH,HOME:dir,CODEX_HOME:dir,JEV_STATE_DIR:join(dir,'state'),JEV_PORT:String(port),UPSTREAM_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,OPENAI_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,JEV_PROVIDER:'typesafe',TYPESAFE_API_KEY:'test-not-real',JEV_URL:`http://127.0.0.1:${server.address().port}/evaluate`,JEV_CODEX_BIN:process.env.JEV_CODEX_BIN??'codex'};
+const env={PATH:process.env.PATH,HOME:dir,CODEX_HOME:dir,JEV_STATE_DIR:join(dir,'state'),JEV_PORT:String(port),UPSTREAM_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,OPENAI_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,OPENROUTER_API_KEY:'test-not-real',JEV_URL:`http://127.0.0.1:${server.address().port}/evaluate`,JEV_CODEX_BIN:process.env.JEV_CODEX_BIN??'codex'};
+if(process.platform==='win32')Object.assign(env,{SystemRoot:process.env.SystemRoot,COMSPEC:process.env.COMSPEC,PATHEXT:process.env.PATHEXT,USERPROFILE:dir,LOCALAPPDATA:dir,APPDATA:dir,TEMP:dir,TMP:dir});
 await writeFile(join(dir,'config.toml'),`openai_base_url = "http://127.0.0.1:${server.address().port}/v1"\nchatgpt_base_url = "http://127.0.0.1:${server.address().port}"\n`);
 await writeFile(join(dir,'auth.json'),JSON.stringify({auth_mode:'apikey',OPENAI_API_KEY:'test-not-real'}),{mode:0o600});
 const bin=fileURLToPath(new URL('../bin/jev-codex.mjs',import.meta.url));
@@ -34,6 +35,7 @@ try{
  const result=await pending;
  assert.ok(result.stdout.includes('fixture complete'));
  assert.equal(calls.filter(c=>c.path==='/evaluate').length,1);
+ assert.equal(calls.find(c=>c.path==='/evaluate')?.model,'typesafe/jev-1.13');
  const modelCall=calls.find(c=>c.path==='/v1/responses');
  assert.equal(modelCall?.model,'gpt-6-astra');
  assert.equal(modelCall?.effort,'low');

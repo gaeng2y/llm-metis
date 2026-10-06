@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build && node --test \"test/*.test.mjs\"",
     "test:codex": "npm run build && node test/codex-smoke.mjs",
     "start": "node bin/jev-codex.mjs --start",
     "codex": "node bin/jev-codex.mjs"

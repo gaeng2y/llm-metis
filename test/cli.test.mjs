@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, stat, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -11,7 +11,7 @@ import { detectUpstream, codexArgs } from '../dist/cli.js';
 
 const exec=promisify(execFile);
 test('authentication selection and ephemeral Codex arguments',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'jev-auth-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const dir=await mkdtemp(join(tmpdir(),'jev auth '));t.after(()=>rm(dir,{recursive:true,force:true}));
   await writeFile(join(dir,'auth.json'),JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'do-not-log'}}));
   assert.equal(await detectUpstream({CODEX_HOME:dir}),'https://chatgpt.com/backend-api/codex');
   assert.equal(await detectUpstream({CODEX_HOME:dir,UPSTREAM_BASE_URL:'https://custom.example/v1'}),'https://custom.example/v1');
@@ -24,29 +24,40 @@ test('authentication selection and ephemeral Codex arguments',async t=>{
 });
 
 test('CLI lifecycle, flags, task metrics, and unchanged Codex config',async t=>{
-  const dir=await mkdtemp(join(tmpdir(),'jev-cli-'));
+  const dir=await mkdtemp(join(tmpdir(),'jev cli '));
   const portServer=createServer();portServer.listen(0,'127.0.0.1');await once(portServer,'listening');
   const port=portServer.address().port;await new Promise(r=>portServer.close(r));
   const fake=join(dir,'fake-codex.mjs');
-  await writeFile(fake,'#!/usr/bin/env node\nimport {writeFileSync} from "node:fs"; writeFileSync(process.env.JEV_TEST_CAPTURE,JSON.stringify({args:process.argv.slice(2),token:!!process.env.JEV_CONTROL_TOKEN,task:!!process.env.JEV_CONTROL_TASK_ID}));\n',{mode:0o700});
+  const evaluatorKeys=['TYPESAFE_API_KEY','OPENROUTER_API_KEY','AI_GATEWAY_API_KEY'];
+  await writeFile(fake,`import {writeFileSync} from "node:fs"; writeFileSync(process.env.JEV_TEST_CAPTURE,JSON.stringify({args:process.argv.slice(2),token:!!process.env.JEV_CONTROL_TOKEN,task:!!process.env.JEV_CONTROL_TASK_ID,evaluatorKeys:Object.fromEntries(${JSON.stringify(evaluatorKeys)}.map(key=>[key,Object.keys(process.env).some(name=>name.toUpperCase()===key)]))}));\n`,{mode:0o600});
   const original='# untouched normal config\nmodel = "gpt-6-astra"\n';await writeFile(join(dir,'config.toml'),original);
-  const env={...process.env,JEV_STATE_DIR:join(dir,'state'),CODEX_HOME:dir,JEV_PORT:String(port),JEV_CODEX_BIN:fake,JEV_TEST_CAPTURE:join(dir,'capture.json'),UPSTREAM_BASE_URL:'http://127.0.0.1:1/v1'};
-  for(const key of ['TYPESAFE_API_KEY','OPENROUTER_API_KEY','AI_GATEWAY_API_KEY'])delete env[key];
+  const env={...process.env,JEV_PROVIDER:'typesafe',JEV_STATE_DIR:join(dir,'state'),CODEX_HOME:dir,JEV_PORT:String(port),JEV_CODEX_BIN:fake,JEV_TEST_CAPTURE:join(dir,'capture.json'),UPSTREAM_BASE_URL:'http://127.0.0.1:1/v1'};
+  for(const key of Object.keys(env))if(evaluatorKeys.includes(key.toUpperCase()))delete env[key];
+  for(const key of evaluatorKeys)env[process.platform==='win32'?key.toLowerCase():key]='fake-evaluator-key';
   const cli=(...args)=>exec(process.execPath,['bin/jev-codex.mjs',...args],{env,timeout:15000});
   t.after(async()=>{await cli('--stop').catch(()=>{});await rm(dir,{recursive:true,force:true});});
   assert.match((await cli('--status')).stdout,/stopped/);
   await cli('--start');
-  const info=JSON.parse(await readFile(join(dir,'state','instance.json'),'utf8'));
-  assert.equal((await stat(join(dir,'state','instance.json'))).mode&0o777,0o600);
+  const statePath=join(dir,'state','instance.json');
+  const info=JSON.parse(await readFile(statePath,'utf8'));
+  if(process.platform==='win32'){
+    const powershell=win32.join(process.env.SystemRoot??'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
+    const command='$acl=Get-Acl -LiteralPath $env:JEV_TEST_STATE; [pscustomobject]@{protected=$acl.AreAccessRulesProtected; currentSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; rules=@($acl.Access | ForEach-Object { [pscustomobject]@{sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value; inherited=$_.IsInherited; type=[string]$_.AccessControlType; rights=[string]$_.FileSystemRights} })} | ConvertTo-Json -Depth 4 -Compress';
+    const acl=JSON.parse((await exec(powershell,['-NoProfile','-NonInteractive','-Command',command],{env:{...env,JEV_TEST_STATE:statePath},timeout:10000})).stdout);
+    assert.equal(acl.protected,true);
+    assert.deepEqual(acl.rules,[{sid:acl.currentSid,inherited:false,type:'Allow',rights:'FullControl'}]);
+  }else assert.equal((await stat(statePath)).mode&0o777,0o600);
   assert.equal(JSON.parse((await cli('--status')).stdout).service,'jev-control');
   await cli('--tool-routing','off');assert.equal(JSON.parse((await cli('--status')).stdout).toolRouting,false);
   await cli('--routing','off');assert.equal(JSON.parse((await cli('--status')).stdout).effortRouting,false);
   await cli('--effort-routing','on');assert.equal(JSON.parse((await cli('--status')).stdout).effortRouting,true);
-  await cli('--','exec','-c','model_reasoning_effort="high"','test prompt');
+  const prompt='파일 "읽기" & | %PATH% $(echo untouched)';
+  await cli('--','exec','-c','model_reasoning_effort="high"',prompt);
   const capture=JSON.parse(await readFile(env.JEV_TEST_CAPTURE,'utf8'));
-  assert.deepEqual(capture.args.slice(0,4),['exec','-c','model_reasoning_effort="high"','test prompt']);
+  assert.deepEqual(capture.args.slice(0,4),['exec','-c','model_reasoning_effort="high"',prompt]);
   assert.ok(capture.args.indexOf('model_provider="jev-control"')>capture.args.indexOf('exec'));
   assert.equal(capture.token,true);assert.equal(capture.task,true);
+  assert.deepEqual(capture.evaluatorKeys,Object.fromEntries(evaluatorKeys.map(key=>[key,false])));
   assert.equal(await readFile(join(dir,'config.toml'),'utf8'),original);
   const metrics=await(await fetch(`http://127.0.0.1:${port}/control/metrics`,{headers:{'x-jev-token':info.token}})).json();
   assert.equal(metrics.tasks.length,1);assert.equal(metrics.tasks[0].cohort,'effort-only');

@@ -1,15 +1,16 @@
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile, rename, unlink, rmdir } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, rmdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { loadConfig } from './config.js';
+import { loadConfig, PROVIDERS } from './config.js';
 import { createGateway } from './gateway.js';
 import { object } from './decision.js';
 import { cohort } from './metrics.js';
+import { codexLaunch, dashboardLaunch, writePrivateFile } from './platform.js';
 
 interface Instance { id: string; token: string; port: number; pid: number }
 const stateDir = () => resolve(process.env.JEV_STATE_DIR ?? join(homedir(), '.local', 'state', 'jev-control'));
@@ -71,7 +72,7 @@ async function serve() {
   await once(server, 'listening');
   try {
     const tmp = `${stateFile()}.${instance.id}`;
-    await writeFile(tmp, JSON.stringify(instance), { mode: 0o600, flag: 'wx' });
+    await writePrivateFile(tmp, JSON.stringify(instance));
     await rename(tmp, stateFile());
   } catch { server.close(); throw Error('Cannot write private gateway state'); }
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
@@ -85,7 +86,7 @@ async function ensureStarted() {
   catch { throw Error(`Another start is in progress. If no start process remains, remove ${lock} and retry.`); }
   try {
     const again = await running(); if (again) return again;
-    const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/jev-codex.mjs', import.meta.url)), '--serve'], { detached: true, stdio: ['ignore','ignore','ignore','ipc'], env: process.env });
+    const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/jev-codex.mjs', import.meta.url)), '--serve'], { detached: true, windowsHide: true, stdio: ['ignore','ignore','ignore','ipc'], env: process.env });
     await new Promise<void>((accept, reject) => {
       const timer = setTimeout(() => { child.kill('SIGTERM'); reject(Error('Gateway startup timed out')); }, 8000);
       const cleanup = () => { clearTimeout(timer); child.removeAllListeners('error'); child.removeAllListeners('exit'); child.removeAllListeners('message'); };
@@ -144,22 +145,27 @@ export async function main(args = process.argv.slice(2)) {
   }
   if (command === '--dashboard') {
     const url = `${origin(instance)}/dashboard#token=${instance.token}`;
-    const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
-    const child = spawn(opener, [url], { stdio: 'ignore' });
-    const [code] = await once(child, 'exit');
-    if (code !== 0) throw Error('Could not open the local dashboard');
+    const opener = dashboardLaunch(url);
+    try {
+      const child = spawn(opener.file, opener.args, { stdio: 'ignore', windowsHide: true });
+      const [code] = await once(child, 'exit');
+      if (code !== 0) throw Error('Browser launch failed');
+    } catch { throw Error('Could not open the local dashboard. A desktop browser is required; Linux also needs xdg-open.'); }
     console.log(`Dashboard opened at ${origin(instance)}/dashboard`); return;
   }
   const taskId = randomUUID();
   const started = performance.now();
   const childEnv: NodeJS.ProcessEnv = { ...process.env, JEV_CONTROL_TOKEN: instance.token, JEV_CONTROL_TASK_ID: taskId };
-  for (const key of ['TYPESAFE_API_KEY','OPENROUTER_API_KEY','AI_GATEWAY_API_KEY']) delete childEnv[key];
+  for (const name of Object.keys(childEnv)) {
+    if (Object.values(PROVIDERS).some(({ key }) => key === (process.platform === 'win32' ? name.toUpperCase() : name))) delete childEnv[name];
+  }
   const userArgs = command === '--' ? args.slice(1) : args;
   // Codex exec has its own -c parser; root-only overrides can disappear when exec also has -c.
   // Insert before a positional '--', otherwise append within the active command's options.
   const delimiter = userArgs.indexOf('--');
   const at = delimiter < 0 ? userArgs.length : delimiter;
-  const child = spawn(process.env.JEV_CODEX_BIN ?? 'codex', [...userArgs.slice(0, at), ...codexArgs(origin(instance)), ...userArgs.slice(at)], { stdio: 'inherit', env: childEnv });
+  const launch = codexLaunch(process.env.JEV_CODEX_BIN ?? 'codex', [...userArgs.slice(0, at), ...codexArgs(origin(instance)), ...userArgs.slice(at)], childEnv);
+  const child = spawn(launch.file, launch.args, { stdio: 'inherit', env: childEnv });
   // Terminal signals also reach Codex in the foreground group. Let Codex handle Ctrl-C itself.
   const interrupt = () => {}; const terminate = () => { child.kill('SIGTERM'); };
   process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
