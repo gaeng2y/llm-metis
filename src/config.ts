@@ -1,7 +1,7 @@
 export const PROVIDERS = {
-  typesafe: { key: 'TYPESAFE_API_KEY', url: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest' },
   openrouter: { key: 'OPENROUTER_API_KEY', url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13' },
   vercel: { key: 'AI_GATEWAY_API_KEY', url: 'https://ai-gateway.vercel.sh/v1/evaluate', model: 'typesafe-ai/jev' },
+  typesafe: { key: 'TYPESAFE_API_KEY', url: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest' },
 } as const;
 export type Provider = keyof typeof PROVIDERS;
 export interface Config {
@@ -17,6 +17,7 @@ export function endpoint(value: string, name: string): string {
   return u.href.replace(/\/+$/, '');
 }
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  if (process.platform === 'win32') env = Object.fromEntries(Object.entries(env).map(([key, value]) => [key.toUpperCase(), value]));
   const toggle = (key: string, fallback: boolean) => {
     if (!env[key]) return fallback;
     if (!['on','off'].includes(env[key]!)) throw Error(`${key} must be on or off`);
@@ -27,8 +28,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) throw Error(`Invalid ${key}`);
     return value;
   };
-  const provider = env.JEV_PROVIDER?.toLowerCase() ?? (Object.keys(PROVIDERS) as Provider[]).find(p => env[PROVIDERS[p].key]) ?? 'typesafe';
-  if (!Object.hasOwn(PROVIDERS, provider)) throw Error('JEV_PROVIDER must be typesafe, openrouter, or vercel');
+  const provider = env.JEV_PROVIDER?.trim().toLowerCase() || 'openrouter';
+  if (!Object.hasOwn(PROVIDERS, provider)) throw Error('JEV_PROVIDER must be openrouter, vercel, or typesafe');
   const p = PROVIDERS[provider as Provider];
   return {
     port: number('JEV_PORT', 8791, 1, 65535, true),
