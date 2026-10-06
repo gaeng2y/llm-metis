@@ -1,6 +1,8 @@
 # Architecture proposal and implementation plan
 
-Recorded before implementation, 2026-09-23. Package/command: `jev-control` / `jev-codex`; workspace: Metis.
+Recorded before implementation, 2026-09-23, under the working names `jev-control` / `jev-codex`. Current package: `llm-metis`; command: `metis-codex` (`llm-metis` alias). Jev names refer to the decision engine, its provider models, and evaluator metrics.
+
+The implemented client integration is Codex's Responses API. Claude Code integration and a `metis-claude` command are not implemented.
 
 ## Evidence
 
@@ -26,7 +28,7 @@ Codex HTTP/SSE request
 ## Proposed structure
 
 ```text
-bin/jev-codex.mjs
+bin/metis-codex.mjs
 src/{config,decision,state,jev,routing,gateway,metrics,cli}.ts
 src/dashboard.html
 test/{routing,jev,gateway,cli}.test.mjs

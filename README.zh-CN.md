@@ -1,8 +1,8 @@
-# Jev Control
+# llm-metis
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
-这是一个**实验性本地网关，通过一次 Jev 请求为 Codex 选择工具和推理强度（reasoning effort）**。包名为 `jev-control`，命令为 `jev-codex`。网关保留在 Codex 中选择的模型，不会替换模型。
+**llm-metis** 是一个实验性本地网关，通过一次 Jev 请求为 Codex 选择工具和推理强度（reasoning effort）。Jev 是网关使用的决策引擎。使用 `metis-codex` 命令运行和配置。网关保留在 Codex 中选择的模型，不会替换模型。
 
 ```text
 Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
@@ -14,48 +14,47 @@ Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
 
 ## 快速开始
 
-macOS / Linux:
+在 macOS、Linux 或 Windows PowerShell 中从仓库安装：
 
 ```sh
+git clone https://github.com/gaeng2y/llm-metis.git
+cd llm-metis
 npm install
-npm run build
-cp .env.example .env
-chmod 600 .env
-# 在 .env 中设置 Jev 服务商及其 API 密钥。
-npm run codex
+npm link
+metis-codex configure
 ```
 
-Windows PowerShell:
+`npm install` 会自动构建 CLI，`npm link` 将 `metis-codex` 注册到 PATH。这是从源码安装，无需 npm 注册表发布。配置命令会让你选择 OpenRouter、Vercel 或 TypeSafe，并输入 API 密钥。输入的密钥不会显示在屏幕上，无需手动编辑 `.env`。
 
-```powershell
-npm install
-npm run build
-Copy-Item .env.example .env
-# 在 .env 中设置 Jev 服务商及其 API 密钥。
-npm run codex
-```
-
-这些命令会在后台启动网关并运行 Codex。启动器读取当前工作目录中的 `.env`。如果缺少凭据或 Jev 调用失败，网关会转发原始模型请求。未配置密钥时，仪表盘会显示 `Credentials: missing` 和 `jev_credentials_missing`。
-
-如需通过 PATH 使用该命令，请在此项目目录运行 `npm link`。无需全局注册，也可以用 `node bin/jev-codex.mjs …` 执行下面的所有命令。
-
-Windows 支持原生 `codex.exe` 和标准 npm 安装生成的 `codex.cmd`。npm 启动器直接执行官方 JavaScript 入口，不经过 shell。`JEV_CODEX_BIN` 也可指定原生可执行文件或 `.js`、`.mjs`、`.cjs` 入口路径；不支持自定义 `.cmd` / `.bat` 启动器。
+随后，在需要 Codex 处理的项目目录运行：
 
 ```sh
-jev-codex --start
-jev-codex --status
-jev-codex --dashboard
-jev-codex --routing off
-jev-codex --tool-routing on
-jev-codex --effort-routing off
-jev-codex --stop
+metis-codex
+```
+
+这会在后台启动网关，并在当前目录运行 Codex。保存的凭据也可用于其他项目。如果缺少凭据或 Jev 调用失败，网关会转发原始模型请求。未配置密钥时，仪表盘会显示 `Credentials: missing` 和 `jev_credentials_missing`。
+
+源码开发时如不使用 `npm link`，也可在此仓库中执行 `node bin/metis-codex.mjs …`。也可以使用命令别名 `llm-metis`。目前尚未实现 Claude Code 集成，因此不提供 `metis-claude` 命令。
+
+更新已有仓库后，请重新运行 `npm install` 和 `npm link` 来注册新命令。当前任务结束后，依次运行 `metis-codex --stop` 和 `metis-codex --start`。CLI 也能识别旧默认状态目录中的网关并安全停止它，但不会自动重启。
+
+Windows 支持原生 `codex.exe` 和标准 npm 安装生成的 `codex.cmd`。npm 启动器直接执行官方 JavaScript 入口，不经过 shell。`METIS_CODEX_BIN` 也可指定原生可执行文件或 `.js`、`.mjs`、`.cjs` 入口路径；不支持自定义 `.cmd` / `.bat` 启动器。
+
+```sh
+metis-codex --start
+metis-codex --status
+metis-codex --dashboard
+metis-codex --routing off
+metis-codex --tool-routing on
+metis-codex --effort-routing off
+metis-codex --stop
 
 # 将 Codex 选项和命令放在 -- 后面。
-jev-codex -- --model gpt-6-astra
-jev-codex -- exec --model gpt-6-astra '在此描述你的任务'
+metis-codex -- --model gpt-6-astra
+metis-codex -- exec --model gpt-6-astra '在此描述你的任务'
 ```
 
-路由命令和仪表盘中的修改会立即应用于网关后续处理的请求。重启后恢复环境变量中的设置。修改环境变量、凭据或 upstream URL 后，请依次运行 `--stop` 和 `--start`。使用同一状态目录的终端共享一个网关。如需独立实验，请为 `JEV_STATE_DIR` 和 `JEV_PORT` 分别设置不同的值。
+路由命令和仪表盘中的修改会立即应用于网关后续处理的请求。重启后重新读取保存的配置和环境变量。修改环境变量、凭据或 upstream URL 后，请依次运行 `--stop` 和 `--start`。使用同一状态目录的终端共享一个网关。如需独立实验，请为 `METIS_STATE_DIR` 和 `METIS_PORT` 分别设置不同的值。
 
 仪表盘通过 macOS 的 `open`、Linux 的 `xdg-open` 或 Windows 的 `rundll32` 打开。在 Linux 上打开仪表盘需要桌面会话和 `xdg-open`。
 
@@ -69,51 +68,60 @@ CLI 仅将 `-c model_provider=…` 和服务商配置传给它启动的 Codex �
 
 ### Jev 服务商设置
 
-选择一个 Jev 服务商，并在 `.env` 中填写其凭据。只需提供所选服务商的凭据，与 Codex 登录分开配置。
+可以在任何目录运行配置命令。所选服务商的凭据与 Codex 登录分开配置。
 
-| 服务商 | `JEV_PROVIDER` | 凭据环境变量 | 默认模型 |
+```sh
+metis-codex configure
+# 直接选择服务商，然后在隐藏输入提示中输入密钥。
+metis-codex configure --provider openrouter
+# configure 的别名。
+metis-codex configuration
+# 查看配置文件位置，不显示密钥。
+metis-codex config-path
+```
+
+在密钥提示中按 Enter，可保留该服务商已保存的密钥。OpenRouter、Vercel 和 TypeSafe 的密钥分别保存，切换服务商不会删除其他密钥。使用密码管理器或自动化时，可将密钥通过管道传给 `metis-codex configure --provider openrouter --key-stdin`，无需将密钥放入命令参数。
+
+| 服务商 | 选择值 | 可选凭据环境变量 | 默认模型 |
 |---|---|---|---|
 | [OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/)（默认） | `openrouter` | `OPENROUTER_API_KEY` | `typesafe/jev-1.13` |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/modalities/evaluation) | `vercel` | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` |
 | [TypeSafe](https://docs.typesafe.ai/api) | `typesafe` | `TYPESAFE_API_KEY` | `jev-latest` |
 
-OpenRouter 配置示例：
+设置保存在 `~/.config/llm-metis/config.json`（Windows 为 `%USERPROFILE%\.config\llm-metis\config.json`）。可通过 `XDG_CONFIG_HOME` 更改配置基础目录，或通过 `METIS_CONFIG` 更改文件位置。文件在 Unix 上使用 0600 权限，在 Windows 上使用仅允许当前用户访问的 DACL。API 密钥保存在这个受保护的本地文件中，不在仓库内。
 
-```dotenv
-JEV_PROVIDER=openrouter
-OPENROUTER_API_KEY=your_openrouter_api_key
-AI_GATEWAY_API_KEY=
-TYPESAFE_API_KEY=
-```
+环境变量或当前目录的 `.env` 中非空的服务商或密钥值优先于已保存的设置。空密钥值不会覆盖已保存的凭据。存在这些覆盖项时，`configure` 会提示。已有 `.env` 的用户若要使用保存的配置，应删除冲突的 `METIS_PROVIDER`（旧名称 `JEV_PROVIDER`）和密钥项。高级设置可参考 `.env.example` 中的环境变量，使用它是可选的。
 
-可以同时保存三个密钥。若要使用 Vercel 或 TypeSafe，请设置 `JEV_PROVIDER=vercel` 或 `JEV_PROVIDER=typesafe`，并填写对应密钥。只使用所选服务商的密钥。
+对应的 `METIS_*` 未设置时，仍会读取旧的 `JEV_*` 环境变量。`METIS_*` 即使为空也优先；服务商值为空时使用保存的选择或默认值。新配置应使用 `METIS_*` 名称。
 
-参照 [Astra-Ares 的显式服务商配置](https://github.com/miuuyy/Astra-Ares/blob/main/docs/configuration.md)，省略或留空 `JEV_PROVIDER` 时使用 `openrouter`。其他已配置的密钥不会改变选择，发生错误时也不会切换服务商。缺少凭据或评估失败时，保留原始 Codex 请求。
+与 [Astra-Ares 的配置方式](https://github.com/miuuyy/Astra-Ares/blob/main/docs/configuration.md)类似，服务商需要显式选择。如果既没有保存的选择，也没有环境变量指定，则默认使用 `openrouter`。其他已配置的密钥不会改变选择，发生错误时也不会切换服务商。缺少凭据或评估失败时，保留原始 Codex 请求。
 
-修改 `.env` 后，请重启网关并检查状态：
+保存配置不会重启正在运行的网关。请等待当前任务完成，再重启并检查状态：
 
 ```sh
-node bin/jev-codex.mjs --stop
-node bin/jev-codex.mjs --start
-node bin/jev-codex.mjs --status
+metis-codex --stop
+metis-codex --start
+metis-codex --status
 ```
 
 `jevConfigured: true` 仅表示已加载密钥，并不代表密钥有效或实际 Jev 决策已成功。执行任务后，请在仪表盘中检查评估是否成功以及实际应用的 effort。
 
 | 环境变量 | 默认值 / 说明 |
 |---|---|
-| `JEV_PROVIDER` | 省略或留空时为 `openrouter`；可选 `openrouter`、`vercel` 或 `typesafe`，仅使用所选服务商的密钥，不自动切换 |
-| `JEV_MODEL`, `JEV_URL` | 使用所选服务商的评估 API 格式覆盖模型和端点；不支持任意 chat-completions 端点 |
-| `JEV_TOOL_MIN_CONFIDENCE` | `0.85` |
-| `JEV_EFFORT_MIN_CONFIDENCE` | `0.85` |
-| `JEV_TIMEOUT_MS` | `2000`；整个决策过程的等待时限，不重试 |
-| `JEV_ROUTING` | `on`；启动时同时启用或禁用两种路由决策 |
-| `JEV_TOOL_ROUTING`, `JEV_EFFORT_ROUTING` | 均默认为 `on` |
-| `JEV_DIRECT_CALLS` | `off`；需显式启用受限的函数调用合成 |
-| `JEV_PORT` | `8791`；始终仅绑定 `127.0.0.1` |
+| `METIS_PROVIDER` | 非空值覆盖保存的服务商；否则使用保存的选择，没有则为 `openrouter`。可选 `openrouter`、`vercel` 或 `typesafe`，不自动切换 |
+| `METIS_CONFIG` | 覆盖保存配置的文件路径；相对路径从当前目录解析 |
+| `XDG_CONFIG_HOME` | `llm-metis/config.json` 的基础目录，默认为 `~/.config` |
+| `METIS_MODEL`, `METIS_URL` | 使用所选服务商的评估 API 格式覆盖模型和端点；不支持任意 chat-completions 端点 |
+| `METIS_TOOL_MIN_CONFIDENCE` | `0.85` |
+| `METIS_EFFORT_MIN_CONFIDENCE` | `0.85` |
+| `METIS_TIMEOUT_MS` | `2000`；整个决策过程的等待时限，不重试 |
+| `METIS_ROUTING` | `on`；启动时同时启用或禁用两种路由决策 |
+| `METIS_TOOL_ROUTING`, `METIS_EFFORT_ROUTING` | 均默认为 `on` |
+| `METIS_DIRECT_CALLS` | `off`；需显式启用受限的函数调用合成 |
+| `METIS_PORT` | `8791`；始终仅绑定 `127.0.0.1` |
 | `UPSTREAM_BASE_URL` | 按上述登录方式选择；URL 中不允许包含凭据和查询参数 |
-| `JEV_STATE_DIR` | `~/.local/state/jev-control`（Windows 为 `%USERPROFILE%\.local\state\jev-control`）；本地令牌文件在 Unix 上使用 0600 权限，在 Windows 上使用仅允许当前用户访问的 DACL |
-| `JEV_CODEX_BIN` | `codex`；可覆盖为原生可执行文件或 `.js` / `.mjs` / `.cjs` 入口路径 |
+| `METIS_STATE_DIR` | `~/.local/state/llm-metis`（Windows 为 `%USERPROFILE%\.local\state\llm-metis`）；本地令牌文件在 Unix 上使用 0600 权限，在 Windows 上使用仅允许当前用户访问的 DACL |
+| `METIS_CODEX_BIN` | `codex`；可覆盖为原生可执行文件或 `.js` / `.mjs` / `.cjs` 入口路径 |
 
 ## 决策规则
 
@@ -135,7 +143,7 @@ Jev 会收到最近的公开对话上下文、公开摘要、长度受限的工�
 - 模型延迟从发送 upstream 请求开始，到流结束为止。如果重试了原始请求，则包含两次尝试的时间。
 - 缺失的用量显示为 `—`，而不是零。`*` 表示只有部分请求报告了用量。
 - direct 调用的 upstream token 用量为零，Jev 用量单独记录。由于尚未核实服务商价格，不计算美元成本。
-- 任务耗时是 `jev-codex` 启动的 Codex 进程的完整运行时间。交互式会话还包括等待用户的时间。比较任务时，请用 `jev-codex -- exec …` 每次只运行一个任务。在会话中途切换模式会降低任务级比较的可靠性。
+- 任务耗时是 `metis-codex` 启动的 Codex 进程的完整运行时间。交互式会话还包括等待用户的时间。比较任务时，请用 `metis-codex -- exec …` 每次只运行一个任务。在会话中途切换模式会降低任务级比较的可靠性。
 - 仪表盘令牌通过 URL fragment 传递，随后从地址中移除。控制 API 和模型代理都需要单独的本地令牌。外部 Origin/Host 请求头会被拒绝。
 
 比较四种模式时，请使用相同的模型、初始 effort、仓库起始状态和任务，同时检查每次运行的结果质量。

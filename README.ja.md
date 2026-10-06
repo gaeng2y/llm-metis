@@ -1,8 +1,8 @@
-# Jev Control
+# llm-metis
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
-**1回の Jev リクエストで Codex のツールと推論の強度（reasoning effort）を選ぶ、実験的なローカルゲートウェイ**です。パッケージ名は `jev-control`、コマンド名は `jev-codex` です。Codex で選択したモデルは変更しません。
+**llm-metis** は、1回の Jev リクエストで Codex のツールと推論の強度（reasoning effort）を選ぶ、実験的なローカルゲートウェイです。Jev はゲートウェイが使用する判断エンジンです。`metis-codex` コマンドで実行と設定を行います。Codex で選択したモデルは変更しません。
 
 ```text
 Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
@@ -14,48 +14,47 @@ Linux、ネイティブ Windows、Apple Silicon 搭載 macOS を対象として�
 
 ## はじめに
 
-macOS / Linux:
+macOS、Linux、Windows PowerShell でリポジトリからインストールします。
 
 ```sh
+git clone https://github.com/gaeng2y/llm-metis.git
+cd llm-metis
 npm install
-npm run build
-cp .env.example .env
-chmod 600 .env
-# .env に Jev のプロバイダーと対応する API キーを設定します。
-npm run codex
+npm link
+metis-codex configure
 ```
 
-Windows PowerShell:
+`npm install` が CLI を自動ビルドし、`npm link` が `metis-codex` を PATH に登録します。npm レジストリへの公開を必要としないソースからのインストールです。設定コマンドで OpenRouter、Vercel、TypeSafe のいずれかを選び、API キーを入力します。キーは画面に表示されず、`.env` の手動編集は不要です。
 
-```powershell
-npm install
-npm run build
-Copy-Item .env.example .env
-# .env に Jev プロバイダーと対応する API キーを設定します。
-npm run codex
-```
-
-ゲートウェイをバックグラウンドで起動し、Codex を実行します。ランチャーは現在の作業ディレクトリにある `.env` を読み込みます。認証情報がない場合や Jev が失敗した場合は、元のモデルリクエストを転送します。キーが未設定の場合、ダッシュボードには `Credentials: missing` と `jev_credentials_missing` が表示されます。
-
-コマンドを PATH から利用するには、このチェックアウト内で `npm link` を実行します。グローバル登録をしなくても、以下のコマンドはすべて `node bin/jev-codex.mjs …` として実行できます。
-
-Windows ではネイティブの `codex.exe` と標準 npm インストールの `codex.cmd` に対応します。npm ランチャーはシェルを使わず、公式の JavaScript エントリーポイントを実行します。`JEV_CODEX_BIN` にはネイティブ実行ファイル、または `.js`、`.mjs`、`.cjs` のエントリーポイントを指定できます。独自の `.cmd` / `.bat` ランチャーには対応していません。
+その後、Codex で作業するプロジェクトのディレクトリから実行します。
 
 ```sh
-jev-codex --start
-jev-codex --status
-jev-codex --dashboard
-jev-codex --routing off
-jev-codex --tool-routing on
-jev-codex --effort-routing off
-jev-codex --stop
+metis-codex
+```
+
+ゲートウェイをバックグラウンドで起動し、現在のディレクトリで Codex を実行します。保存した認証情報は他のプロジェクトでも使えます。認証情報がない場合や Jev が失敗した場合は、元のモデルリクエストを転送します。キーが未設定の場合、ダッシュボードには `Credentials: missing` と `jev_credentials_missing` が表示されます。
+
+ソース開発で `npm link` を使わない場合は、このチェックアウト内で `node bin/metis-codex.mjs …` を実行できます。`llm-metis` もコマンドの別名として利用できます。Claude Code 連携は未実装のため、`metis-claude` コマンドは提供していません。
+
+既存のチェックアウトを更新した場合は、`npm install` と `npm link` を再実行して新しいコマンドを登録してください。実行中のタスクが終了した後、`metis-codex --stop`、`metis-codex --start` の順に実行します。以前のデフォルト状態ディレクトリにあるゲートウェイも検出して安全に停止できますが、自動では再起動しません。
+
+Windows ではネイティブの `codex.exe` と標準 npm インストールの `codex.cmd` に対応します。npm ランチャーはシェルを使わず、公式の JavaScript エントリーポイントを実行します。`METIS_CODEX_BIN` にはネイティブ実行ファイル、または `.js`、`.mjs`、`.cjs` のエントリーポイントを指定できます。独自の `.cmd` / `.bat` ランチャーには対応していません。
+
+```sh
+metis-codex --start
+metis-codex --status
+metis-codex --dashboard
+metis-codex --routing off
+metis-codex --tool-routing on
+metis-codex --effort-routing off
+metis-codex --stop
 
 # Codex のオプションとコマンドは -- の後に渡します。
-jev-codex -- --model gpt-6-astra
-jev-codex -- exec --model gpt-6-astra 'ここにタスクを記述してください'
+metis-codex -- --model gpt-6-astra
+metis-codex -- exec --model gpt-6-astra 'ここにタスクを記述してください'
 ```
 
-ルーティングコマンドとダッシュボードの変更は、稼働中のゲートウェイが処理する次のリクエストから適用されます。再起動すると環境設定に戻ります。環境変数、認証情報、upstream URL を変更した後は、`--stop`、`--start` の順に実行してください。同じ状態ディレクトリを使うターミナルは1つのゲートウェイを共有します。独立した実験には、`JEV_STATE_DIR` と `JEV_PORT` の両方に異なる値を指定します。
+ルーティングコマンドとダッシュボードの変更は、稼働中のゲートウェイが処理する次のリクエストから適用されます。再起動すると保存した設定と環境変数を再読み込みします。環境変数、認証情報、upstream URL を変更した後は、`--stop`、`--start` の順に実行してください。同じ状態ディレクトリを使うターミナルは1つのゲートウェイを共有します。独立した実験には、`METIS_STATE_DIR` と `METIS_PORT` の両方に異なる値を指定します。
 
 ダッシュボードは macOS の `open`、Linux の `xdg-open`、Windows の `rundll32` で開きます。Linux で開くには、デスクトップセッションと `xdg-open` が必要です。
 
@@ -69,51 +68,60 @@ CLI は `-c model_provider=…` とプロバイダー設定を、自身が起動
 
 ### Jev プロバイダーの設定
 
-Jev プロバイダーを1つ選び、その認証情報を `.env` に設定してください。選択したプロバイダーの認証情報だけが必要で、Codex のログインとは別です。
+設定コマンドはどのディレクトリからでも実行できます。選択したプロバイダーの認証情報は Codex のログインとは別です。
 
-| プロバイダー | `JEV_PROVIDER` | 認証用環境変数 | デフォルトモデル |
+```sh
+metis-codex configure
+# プロバイダーを直接選び、非表示のプロンプトでキーを入力します。
+metis-codex configure --provider openrouter
+# configure の別名です。
+metis-codex configuration
+# キーを表示せず、設定ファイルの場所を確認します。
+metis-codex config-path
+```
+
+キー入力時に Enter を押すと、そのプロバイダーに保存済みのキーを維持します。OpenRouter、Vercel、TypeSafe のキーは個別に保存されるため、切り替えても他のキーは削除されません。パスワードマネージャーや自動化では、キーをコマンド引数に入れず、`metis-codex configure --provider openrouter --key-stdin` にパイプで渡せます。
+
+| プロバイダー | 選択値 | 任意の認証用環境変数 | デフォルトモデル |
 |---|---|---|---|
 | [OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/) (デフォルト) | `openrouter` | `OPENROUTER_API_KEY` | `typesafe/jev-1.13` |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/modalities/evaluation) | `vercel` | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` |
 | [TypeSafe](https://docs.typesafe.ai/api) | `typesafe` | `TYPESAFE_API_KEY` | `jev-latest` |
 
-OpenRouter の設定例:
+設定は `~/.config/llm-metis/config.json`（Windows は `%USERPROFILE%\.config\llm-metis\config.json`）に保存します。`XDG_CONFIG_HOME` で設定の基準ディレクトリを、`METIS_CONFIG` でファイルの場所を変更できます。Unix では 0600、Windows では現在のユーザーのみを許可する DACL を適用します。API キーはリポジトリではなく、この保護されたローカルファイルに保存します。
 
-```dotenv
-JEV_PROVIDER=openrouter
-OPENROUTER_API_KEY=your_openrouter_api_key
-AI_GATEWAY_API_KEY=
-TYPESAFE_API_KEY=
-```
+環境変数や現在のディレクトリの `.env` に空欄でないプロバイダーまたはキーがあれば、保存した設定より優先します。空のキー値は保存済みの認証情報を無効にしません。`configure` は上書き設定がある場合に通知します。既存の `.env` を使っている場合、保存した設定を使うには競合する `METIS_PROVIDER`（旧名 `JEV_PROVIDER`）とキーの項目を削除してください。高度な設定用の環境変数は `.env.example` に記載していますが、その使用は任意です。
 
-3つのキーをすべて保存しても構いません。Vercel または TypeSafe を使う場合は、`JEV_PROVIDER=vercel` または `JEV_PROVIDER=typesafe` に変更し、対応するキーを入力してください。選択したプロバイダーのキーだけを使用します。
+従来の `JEV_*` 環境変数は、対応する `METIS_*` が未設定の場合に読み込みます。`METIS_*` は空欄でも優先され、プロバイダーが空欄なら保存済みの選択またはデフォルトを使用します。新しく設定する場合は `METIS_*` を使用してください。
 
-[Astra-Ares の明示的なプロバイダー設定](https://github.com/miuuyy/Astra-Ares/blob/main/docs/configuration.md)に従い、`JEV_PROVIDER` を省略または空欄にすると `openrouter` を使います。他のキーが設定されていても選択は変わらず、エラーが起きても別のプロバイダーへ切り替えません。認証情報がない場合や評価に失敗した場合は、元の Codex リクエストを維持します。
+[Astra-Ares の設定方式](https://github.com/miuuyy/Astra-Ares/blob/main/docs/configuration.md)と同様に、プロバイダーは明示的に選択します。保存済みの選択も環境変数による指定もなければ、`openrouter` がデフォルトです。他のキーが設定されていても選択は変わらず、エラーが起きても別のプロバイダーへ切り替えません。認証情報がない場合や評価に失敗した場合は、元の Codex リクエストを維持します。
 
-`.env` を変更した後は、ゲートウェイを再起動して状態を確認してください。
+設定を保存しても、稼働中のゲートウェイは再起動しません。実行中のタスクが終了してから再起動し、状態を確認してください。
 
 ```sh
-node bin/jev-codex.mjs --stop
-node bin/jev-codex.mjs --start
-node bin/jev-codex.mjs --status
+metis-codex --stop
+metis-codex --start
+metis-codex --status
 ```
 
 `jevConfigured: true` はキーが読み込まれたことを示し、キーの有効性や実際の Jev 判断の成功を確認するものではありません。タスク実行後にダッシュボードで評価の成否と適用された effort を確認してください。
 
 | 環境変数 | デフォルト / 説明 |
 |---|---|
-| `JEV_PROVIDER` | 省略または空欄なら `openrouter`。`openrouter`、`vercel`、`typesafe` から選択し、選択したキーのみ使用。自動切り替えなし |
-| `JEV_MODEL`, `JEV_URL` | 選択したプロバイダーの評価 API 形式を維持してモデルとエンドポイントを上書き。任意の chat-completions エンドポイントは未対応 |
-| `JEV_TOOL_MIN_CONFIDENCE` | `0.85` |
-| `JEV_EFFORT_MIN_CONFIDENCE` | `0.85` |
-| `JEV_TIMEOUT_MS` | `2000`。判断全体の待機期限。再試行なし |
-| `JEV_ROUTING` | `on`。起動時に両方の判断を有効化または無効化 |
-| `JEV_TOOL_ROUTING`, `JEV_EFFORT_ROUTING` | どちらも `on` |
-| `JEV_DIRECT_CALLS` | `off`。制限付きの関数呼び出し合成を明示的に有効化 |
-| `JEV_PORT` | `8791`。常に `127.0.0.1` のみにバインド |
+| `METIS_PROVIDER` | 空欄でない値は保存したプロバイダーより優先。それ以外は保存した選択、なければ `openrouter`。`openrouter`、`vercel`、`typesafe` から選択し、自動切り替えなし |
+| `METIS_CONFIG` | 保存する設定ファイルのパス。相対パスは現在のディレクトリから解決 |
+| `XDG_CONFIG_HOME` | `llm-metis/config.json` の基準ディレクトリ。デフォルトは `~/.config` |
+| `METIS_MODEL`, `METIS_URL` | 選択したプロバイダーの評価 API 形式を維持してモデルとエンドポイントを上書き。任意の chat-completions エンドポイントは未対応 |
+| `METIS_TOOL_MIN_CONFIDENCE` | `0.85` |
+| `METIS_EFFORT_MIN_CONFIDENCE` | `0.85` |
+| `METIS_TIMEOUT_MS` | `2000`。判断全体の待機期限。再試行なし |
+| `METIS_ROUTING` | `on`。起動時に両方の判断を有効化または無効化 |
+| `METIS_TOOL_ROUTING`, `METIS_EFFORT_ROUTING` | どちらも `on` |
+| `METIS_DIRECT_CALLS` | `off`。制限付きの関数呼び出し合成を明示的に有効化 |
+| `METIS_PORT` | `8791`。常に `127.0.0.1` のみにバインド |
 | `UPSTREAM_BASE_URL` | 上記のログイン方式に応じて選択。URL 内の認証情報とクエリパラメーターは禁止 |
-| `JEV_STATE_DIR` | `~/.local/state/jev-control`（Windows は `%USERPROFILE%\.local\state\jev-control`）。ローカルトークンファイルは Unix では 0600、Windows では現在のユーザーのみを許可する DACL を適用 |
-| `JEV_CODEX_BIN` | `codex`。ネイティブ実行ファイル、または `.js` / `.mjs` / `.cjs` のエントリーポイントで上書き可能 |
+| `METIS_STATE_DIR` | `~/.local/state/llm-metis`（Windows は `%USERPROFILE%\.local\state\llm-metis`）。ローカルトークンファイルは Unix では 0600、Windows では現在のユーザーのみを許可する DACL を適用 |
+| `METIS_CODEX_BIN` | `codex`。ネイティブ実行ファイル、または `.js` / `.mjs` / `.cjs` のエントリーポイントで上書き可能 |
 
 ## 判断ポリシー
 
@@ -135,7 +143,7 @@ Jev には、直近の公開された会話コンテキスト、公開要約、�
 - モデル遅延は upstream リクエストの送信からストリーム終了までです。元のリクエストを再試行した場合は、両方の試行時間を含みます。
 - 使用量が不明な場合はゼロではなく `—` と表示します。`*` は、一部のリクエストのみが使用量を報告したことを示します。
 - direct 呼び出しの upstream トークン使用量はゼロです。Jev の使用量は別途記録します。プロバイダーの料金を検証していないため、ドル換算のコストは計算しません。
-- タスク所要時間は、`jev-codex` が起動した Codex プロセスの全実行時間です。対話セッションではユーザーの待ち時間も含みます。比較には `jev-codex -- exec …` で1回につき1タスクを実行してください。セッション中にモードを変えると、タスク単位の比較の信頼性が下がります。
+- タスク所要時間は、`metis-codex` が起動した Codex プロセスの全実行時間です。対話セッションではユーザーの待ち時間も含みます。比較には `metis-codex -- exec …` で1回につき1タスクを実行してください。セッション中にモードを変えると、タスク単位の比較の信頼性が下がります。
 - ダッシュボードのトークンは URL fragment で渡した後、アドレスから削除します。制御 API とモデルプロキシの両方に、別途ローカルトークンが必要です。外部の Origin/Host ヘッダーは拒否します。
 
 4つのモードを比較する際は、モデル、初期 effort、リポジトリの開始状態、タスクを揃え、各結果の品質も確認してください。

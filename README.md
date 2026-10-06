@@ -1,8 +1,8 @@
-# Jev Control
+# llm-metis
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
-An **experimental local gateway that selects tools and reasoning effort for Codex with a single Jev request**. The package is `jev-control`, and the command is `jev-codex`. The gateway preserves the model selected in Codex.
+**llm-metis** is an experimental local gateway that selects tools and reasoning effort for Codex with a single Jev request. Jev is the decision engine used by the gateway. Install and configure it with the `metis-codex` command. The gateway preserves the model selected in Codex.
 
 ```text
 Codex → HTTP gateway → DecisionEngine → Jev (tool + effort)
@@ -14,48 +14,47 @@ Targets Linux, native Windows, and macOS on Apple Silicon. Requires Node.js 22.1
 
 ## Getting started
 
-macOS / Linux:
+Install from a checkout on macOS, Linux, or Windows PowerShell:
 
 ```sh
+git clone https://github.com/gaeng2y/llm-metis.git
+cd llm-metis
 npm install
-npm run build
-cp .env.example .env
-chmod 600 .env
-# Set your Jev provider and its API key in .env.
-npm run codex
+npm link
+metis-codex configure
 ```
 
-Windows PowerShell:
+`npm install` builds the CLI automatically. `npm link` makes `metis-codex` available on your PATH. This is a source installation; an npm registry release is not required. The configuration command asks you to choose OpenRouter, Vercel, or TypeSafe and enter its API key without displaying it. No `.env` editing is needed.
 
-```powershell
-npm install
-npm run build
-Copy-Item .env.example .env
-# Set your Jev provider and its API key in .env.
-npm run codex
-```
-
-These commands start the gateway in the background and launch Codex. The launcher reads `.env` from the current working directory. If credentials are missing or Jev fails, the gateway forwards the original model request. The dashboard shows `Credentials: missing` and `jev_credentials_missing` when no key is configured.
-
-To make the command available on your PATH, run `npm link` from this checkout. Without registering it globally, you can run every command below as `node bin/jev-codex.mjs …`.
-
-On Windows, both native `codex.exe` and the standard npm installation's `codex.cmd` are supported. The npm launcher uses the official JavaScript entry point without a shell. `JEV_CODEX_BIN` can also point to a native executable or a `.js`, `.mjs`, or `.cjs` entry point; custom `.cmd` / `.bat` launchers are not supported.
+Then run this from the project you want Codex to work on:
 
 ```sh
-jev-codex --start
-jev-codex --status
-jev-codex --dashboard
-jev-codex --routing off
-jev-codex --tool-routing on
-jev-codex --effort-routing off
-jev-codex --stop
+metis-codex
+```
+
+This starts the gateway in the background and launches Codex in the current directory. Saved credentials work across projects. If credentials are missing or Jev fails, the gateway forwards the original model request. The dashboard shows `Credentials: missing` and `jev_credentials_missing` when no key is configured.
+
+For source development without `npm link`, use `node bin/metis-codex.mjs …` from this checkout. `llm-metis` is also available as a command alias. Claude Code integration is not implemented, so this package does not provide a `metis-claude` command.
+
+When upgrading an existing checkout, run `npm install` and `npm link` again to register the new command. Let active tasks finish, then run `metis-codex --stop` followed by `metis-codex --start`. The CLI recognizes an older gateway in the previous default state directory so it can be stopped safely; it does not restart it automatically.
+
+On Windows, both native `codex.exe` and the standard npm installation's `codex.cmd` are supported. The npm launcher uses the official JavaScript entry point without a shell. `METIS_CODEX_BIN` can also point to a native executable or a `.js`, `.mjs`, or `.cjs` entry point; custom `.cmd` / `.bat` launchers are not supported.
+
+```sh
+metis-codex --start
+metis-codex --status
+metis-codex --dashboard
+metis-codex --routing off
+metis-codex --tool-routing on
+metis-codex --effort-routing off
+metis-codex --stop
 
 # Pass Codex options and commands after --.
-jev-codex -- --model gpt-6-astra
-jev-codex -- exec --model gpt-6-astra 'Describe your task here'
+metis-codex -- --model gpt-6-astra
+metis-codex -- exec --model gpt-6-astra 'Describe your task here'
 ```
 
-Routing commands and dashboard changes apply immediately to subsequent requests handled by the running gateway. Restarting restores the environment settings. Run `--stop` followed by `--start` after changing environment variables, credentials, or the upstream URL. Terminals using the same state directory share one gateway. Set different values for both `JEV_STATE_DIR` and `JEV_PORT` to run independent experiments.
+Routing commands and dashboard changes apply immediately to subsequent requests handled by the running gateway. Restarting reloads the saved configuration and environment settings. Run `--stop` followed by `--start` after changing environment variables, credentials, or the upstream URL. Terminals using the same state directory share one gateway. Set different values for both `METIS_STATE_DIR` and `METIS_PORT` to run independent experiments.
 
 The dashboard opens with `open` on macOS, `xdg-open` on Linux, and `rundll32` on Windows. Linux dashboard opening requires a desktop session and `xdg-open`.
 
@@ -69,51 +68,60 @@ The launcher sets `supports_websockets=false` for that invocation to use HTTP/SS
 
 ### Jev provider setup
 
-Choose one Jev provider and add its credentials to `.env`. You only need credentials for the selected provider, separate from your Codex login.
+Run the configuration command from any directory. The selected provider's credentials are separate from your Codex login.
 
-| Provider | `JEV_PROVIDER` | Credential variable | Default model |
+```sh
+metis-codex configure
+# Select a provider directly, then enter its key at the hidden prompt.
+metis-codex configure --provider openrouter
+# Alias for configure.
+metis-codex configuration
+# Print the configuration file location without revealing keys.
+metis-codex config-path
+```
+
+Press Enter at the key prompt to keep an existing saved key for that provider. Keys are retained separately for OpenRouter, Vercel, and TypeSafe, so switching providers does not erase the others. For password managers or automation, pipe the key into `metis-codex configure --provider openrouter --key-stdin` instead of placing it in command arguments.
+
+| Provider | Selection | Optional credential environment variable | Default model |
 |---|---|---|---|
 | [OpenRouter](https://openrouter.ai/blog/insights/what-is-jev/) (default) | `openrouter` | `OPENROUTER_API_KEY` | `typesafe/jev-1.13` |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/modalities/evaluation) | `vercel` | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` |
 | [TypeSafe](https://docs.typesafe.ai/api) | `typesafe` | `TYPESAFE_API_KEY` | `jev-latest` |
 
-For OpenRouter, set:
+Settings are saved in `~/.config/llm-metis/config.json` (`%USERPROFILE%\.config\llm-metis\config.json` on Windows). `XDG_CONFIG_HOME` changes the base configuration directory; `METIS_CONFIG` overrides the file location. The file uses mode 0600 on Unix and a current-user-only DACL on Windows. API keys are stored locally in this protected file, not in the repository.
 
-```dotenv
-JEV_PROVIDER=openrouter
-OPENROUTER_API_KEY=your_openrouter_api_key
-AI_GATEWAY_API_KEY=
-TYPESAFE_API_KEY=
-```
+Nonblank provider and key values in the environment or the current directory's `.env` override saved settings. Blank placeholders do not hide saved credentials. `configure` warns when such overrides are present. Existing `.env` users should remove conflicting `METIS_PROVIDER` (or legacy `JEV_PROVIDER`) and key entries to use the saved configuration. For advanced settings, `.env.example` documents the available environment variables; using it is optional.
 
-You may store all three keys. To use Vercel or TypeSafe, set `JEV_PROVIDER=vercel` or `JEV_PROVIDER=typesafe` and fill its key. Only the selected provider's key is used.
+Legacy `JEV_*` environment names remain readable when the corresponding `METIS_*` name is unset. A `METIS_*` value takes precedence even when empty; an empty provider value uses the saved selection or default. New setups should use `METIS_*` names.
 
-Following [Astra-Ares's explicit provider configuration](https://github.com/miuuyy/Astra-Ares/blob/main/docs/configuration.md), an omitted or blank `JEV_PROVIDER` defaults to `openrouter`. Other configured keys never change the selection, including after an error. Missing credentials or evaluation failures preserve the original Codex request.
+Provider selection is explicit, following [Astra-Ares's configuration approach](https://github.com/miuuyy/Astra-Ares/blob/main/docs/configuration.md). Without a saved or environment-selected provider, the default is `openrouter`. Other configured keys never change the selection, including after an error. Missing credentials or evaluation failures preserve the original Codex request.
 
-After editing `.env`, restart the gateway and check its status:
+Saving configuration does not restart a running gateway. Let active tasks finish, then restart it and check its status:
 
 ```sh
-node bin/jev-codex.mjs --stop
-node bin/jev-codex.mjs --start
-node bin/jev-codex.mjs --status
+metis-codex --stop
+metis-codex --start
+metis-codex --status
 ```
 
 `jevConfigured: true` confirms that a key was loaded; it does not verify the key or a live Jev decision. Check the dashboard after a task for successful evaluation and applied effort.
 
 | Environment variable | Default / description |
 |---|---|
-| `JEV_PROVIDER` | `openrouter` if omitted or blank; select `openrouter`, `vercel`, or `typesafe`. Only the selected provider's key is used; no automatic switching |
-| `JEV_MODEL`, `JEV_URL` | Override the model and endpoint using the selected provider's evaluation API format; arbitrary chat-completions endpoints are not supported |
-| `JEV_TOOL_MIN_CONFIDENCE` | `0.85` |
-| `JEV_EFFORT_MIN_CONFIDENCE` | `0.85` |
-| `JEV_TIMEOUT_MS` | `2000`; deadline for the entire decision, with no retries |
-| `JEV_ROUTING` | `on`; enables or disables both routing decisions at startup |
-| `JEV_TOOL_ROUTING`, `JEV_EFFORT_ROUTING` | Both default to `on` |
-| `JEV_DIRECT_CALLS` | `off`; opt in to restricted function-call synthesis |
-| `JEV_PORT` | `8791`; always binds only to `127.0.0.1` |
+| `METIS_PROVIDER` | Nonblank values override the saved provider; otherwise use the saved selection, then `openrouter`. Select `openrouter`, `vercel`, or `typesafe`; no automatic switching |
+| `METIS_CONFIG` | Override the saved configuration file path; relative paths are resolved from the current directory |
+| `XDG_CONFIG_HOME` | Base directory for `llm-metis/config.json`; defaults to `~/.config` |
+| `METIS_MODEL`, `METIS_URL` | Override the model and endpoint using the selected provider's evaluation API format; arbitrary chat-completions endpoints are not supported |
+| `METIS_TOOL_MIN_CONFIDENCE` | `0.85` |
+| `METIS_EFFORT_MIN_CONFIDENCE` | `0.85` |
+| `METIS_TIMEOUT_MS` | `2000`; deadline for the entire decision, with no retries |
+| `METIS_ROUTING` | `on`; enables or disables both routing decisions at startup |
+| `METIS_TOOL_ROUTING`, `METIS_EFFORT_ROUTING` | Both default to `on` |
+| `METIS_DIRECT_CALLS` | `off`; opt in to restricted function-call synthesis |
+| `METIS_PORT` | `8791`; always binds only to `127.0.0.1` |
 | `UPSTREAM_BASE_URL` | Selected from the login method as described above; credentials and query parameters are not allowed in the URL |
-| `JEV_STATE_DIR` | `~/.local/state/jev-control` (`%USERPROFILE%\.local\state\jev-control` on Windows); the local token file uses mode 0600 on Unix and a current-user-only DACL on Windows |
-| `JEV_CODEX_BIN` | `codex`; override with a native executable or a `.js` / `.mjs` / `.cjs` entry point |
+| `METIS_STATE_DIR` | `~/.local/state/llm-metis` (`%USERPROFILE%\.local\state\llm-metis` on Windows); the local token file uses mode 0600 on Unix and a current-user-only DACL on Windows |
+| `METIS_CODEX_BIN` | `codex`; override with a native executable or a `.js` / `.mjs` / `.cjs` entry point |
 
 ## Decision policy
 
@@ -135,7 +143,7 @@ Prompts, arguments, authentication headers, and API keys are not logged. The das
 - Model latency runs from the upstream request until the stream ends. If the original request is retried, it includes both attempts.
 - Missing usage appears as `—`, not zero. `*` indicates that only some requests reported usage.
 - Direct calls use zero upstream tokens; Jev usage is recorded separately. Dollar costs are not calculated because provider pricing has not been verified.
-- Task duration is the total lifetime of the Codex process launched by `jev-codex`. It includes user wait time in interactive sessions. For task comparisons, run one task per invocation with `jev-codex -- exec …`. Changing modes during a session makes its task-level comparison unreliable.
+- Task duration is the total lifetime of the Codex process launched by `metis-codex`. It includes user wait time in interactive sessions. For task comparisons, run one task per invocation with `metis-codex -- exec …`. Changing modes during a session makes its task-level comparison unreliable.
 - The dashboard token is passed in a URL fragment, then removed from the address. Both the control API and model proxy require a separate local token. Foreign Origin/Host headers are rejected.
 
 To compare the four modes, use the same model, initial effort, repository starting state, and task. Check the quality of each result as well.
