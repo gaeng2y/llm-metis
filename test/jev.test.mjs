@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { parseEnv } from 'node:util';
-import { JevDecisionEngine } from '../dist/jev.js';
+import { evaluate, JevDecisionEngine, parseChoiceAnswer } from '../dist/jev.js';
 import { loadConfig, normalizedEnv } from '../dist/config.js';
 import { extractState } from '../dist/state.js';
 import { control } from '../dist/routing.js';
@@ -16,6 +16,28 @@ const providers=[
   ['vercel','AI_GATEWAY_API_KEY','https://ai-gateway.vercel.sh/v1/evaluate','typesafe-ai/jev'],
 ];
 for (const [provider, key, endpoint, model] of providers) {
+  test(`${provider}: shared evaluator preserves pruning question IDs, provider hints, and usage`, async () => {
+    const config=loadConfig({METIS_PROVIDER:provider,[key]:'pruning-test-key'});
+    const publicState={userTask:'Compare the changed files',candidates:[{id:'r3',text:'An old read result'},{id:'r8',text:'An unresolved error'}]};
+    const questions=Object.fromEntries(publicState.candidates.map(({id})=>[id,{type:'choice',instructions:`Keep or prune candidate ${id}?`,criteria:{keep:'Required or uncertain.',prune:'Redundant and no longer needed.'}}]));
+    const raw={model:'jev-fixture',answers:{r3:{type:'choice',choice:'prune',probabilities:{keep:.01,prune:.99}},r8:choice('keep')},usage:provider==='vercel'?{inputTokens:45,outputTokens:2}:{input_tokens:45,output_tokens:2}};
+    const signal=new AbortController().signal;
+    let calls=0;
+    const response=await evaluate(config,publicState,questions,signal,async(url,init)=>{
+      calls++;
+      assert.equal(url,endpoint);assert.equal(init.method,'POST');assert.equal(init.signal,signal);assert.equal(init.redirect,'error');
+      assert.deepEqual(init.headers,{authorization:'Bearer pruning-test-key','content-type':'application/json'});
+      assert.deepEqual(JSON.parse(init.body),{model,state:publicState,questions,
+        ...(provider==='openrouter'?{provider:{only:['typesafe'],allow_fallbacks:false}}:{}),
+        ...(provider==='vercel'?{providerOptions:{gateway:{only:['typesafe-ai']}}}:{}),
+      });
+      return Response.json(raw);
+    });
+    assert.equal(calls,1);assert.deepEqual(response,raw);
+    assert.deepEqual(parseChoiceAnswer(response.answers.r3),{choice:'prune',confidence:.99});
+    assert.deepEqual(parseChoiceAnswer(response.answers.r8),{choice:'keep',confidence:.99});
+  });
+
   test(`${provider}: exactly one typed request decides tool, effort, finite arguments`, async () => {
     const calls=[];
     const cfg=loadConfig({METIS_PROVIDER:provider,[key]:'jev-test-key',METIS_DIRECT_CALLS:'on'});
@@ -39,6 +61,28 @@ for (const [provider, key, endpoint, model] of providers) {
     assert.equal(decision.evaluator.inputTokens,31);
   });
 }
+
+test('shared evaluator rejects malformed envelopes and protects credentials and the byte budget',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'fake'});
+  const questions={r3:{type:'choice',instructions:'Keep or prune r3?',criteria:{keep:null,prune:null}}};
+  for(const raw of ['invalid JSON','null','[]','{}','{"answers":[]}','{"answers":null}']){
+    await assert.rejects(evaluate(config,{},questions,undefined,async()=>new Response(raw)));
+  }
+  let calls=0;const unused=async()=>{calls++;return Response.json({answers:{}});};
+  await assert.rejects(evaluate({...config,jevApiKey:''},{},questions,undefined,unused),/jev_credentials_missing/);
+  await assert.rejects(evaluate(config,'한'.repeat(30_000),questions,undefined,unused),/jev_context_limit/);
+  assert.equal(calls,0);
+});
+
+test('shared choice parser rejects invalid confidence and uses only the selected probability',()=>{
+  for(const raw of [null,[],{},choice(1),{type:'noul',noul:.99}])assert.equal(parseChoiceAnswer(raw),undefined);
+  for(const confidence of [-.2,1.1,NaN,Infinity,'0.99',null,undefined]){
+    assert.ok(Number.isNaN(parseChoiceAnswer({type:'choice',choice:'prune',confidence}).confidence));
+  }
+  assert.deepEqual(parseChoiceAnswer({type:'choice',choice:'prune',probabilities:{keep:.99,prune:.01}}),{choice:'prune',confidence:.01});
+  assert.ok(Number.isNaN(parseChoiceAnswer({type:'choice',choice:'prune',probabilities:{keep:.99}}).confidence));
+  assert.equal(parseChoiceAnswer({type:'choice',choice:'prune',confidence:.8,probabilities:{prune:.9}}).confidence,.8);
+});
 
 test('confidence fallback uses selected probability, not maximum probability',async()=>{
   const e=new JevDecisionEngine(loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'fake'}),async()=>Response.json({answers:{tool:{type:'choice',choice:'t0',probabilities:{t0:.1,no_tool:.9}},effort:choice('low')}}));
