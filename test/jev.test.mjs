@@ -66,12 +66,55 @@ test('shared evaluator rejects malformed envelopes and protects credentials and 
   const config=loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'fake'});
   const questions={r3:{type:'choice',instructions:'Keep or prune r3?',criteria:{keep:null,prune:null}}};
   for(const raw of ['invalid JSON','null','[]','{}','{"answers":[]}','{"answers":null}']){
-    await assert.rejects(evaluate(config,{},questions,undefined,async()=>new Response(raw)));
+    await assert.rejects(evaluate(config,{},questions,undefined,async()=>new Response(raw)),{name:'JevError',category:'invalid_response',message:'jev_invalid_response'});
   }
   let calls=0;const unused=async()=>{calls++;return Response.json({answers:{}});};
-  await assert.rejects(evaluate({...config,jevApiKey:''},{},questions,undefined,unused),/jev_credentials_missing/);
-  await assert.rejects(evaluate(config,'한'.repeat(30_000),questions,undefined,unused),/jev_context_limit/);
+  await assert.rejects(evaluate({...config,jevApiKey:''},{},questions,undefined,unused),{name:'JevError',category:'credentials_missing',message:'jev_credentials_missing'});
+  await assert.rejects(evaluate(config,'한'.repeat(30_000),questions,undefined,unused),{name:'JevError',category:'context_limit',message:'jev_context_limit'});
   assert.equal(calls,0);
+});
+
+test('evaluator reports authentication failure without exposing provider error details',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'secret-key'});
+  for(const status of [401,403]){
+    await assert.rejects(evaluate(config,{}, {},undefined,async()=>new Response('secret provider error and secret-key',{status})),error=>{
+      assert.equal(error.category,'authentication');
+      assert.equal(error.message,'jev_authentication');
+      assert.ok(!JSON.stringify(error).includes('secret'));
+      return true;
+    });
+  }
+});
+
+test('evaluator distinguishes rate limiting from other rejected provider requests',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'openrouter',OPENROUTER_API_KEY:'fake'});
+  for(const [status,category] of [[429,'rate_limit'],[400,'provider_error'],[503,'provider_error']]){
+    await assert.rejects(evaluate(config,{}, {},undefined,async()=>new Response('private provider details',{status})),{name:'JevError',message:`jev_${category}`,category});
+  }
+});
+
+test('evaluator sanitizes transport errors while preserving caller cancellation',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'vercel',AI_GATEWAY_API_KEY:'secret-key'});
+  await assert.rejects(evaluate(config,{}, {},undefined,async()=>{throw Error('secret-key in a network error');}),{name:'JevError',message:'jev_transport',category:'transport'});
+  const abort=new AbortController();
+  const reason=new DOMException('The caller cancelled','AbortError');
+  await assert.rejects(evaluate(config,{}, {},abort.signal,async()=>{abort.abort(reason);throw reason;}),error=>error===reason);
+});
+
+test('rejected provider responses retain their safe category if disposing the body fails',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'fake'});
+  const body=new ReadableStream({cancel(){throw Error('private connection details');}});
+  await assert.rejects(evaluate(config,{}, {},undefined,async()=>new Response(body,{status:401})),{name:'JevError',category:'authentication',message:'jev_authentication'});
+});
+
+test('interrupted evaluator response bodies report transport failure or caller cancellation',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'fake'});
+  const broken=new ReadableStream({start(controller){controller.error(Error('private connection details'));}});
+  await assert.rejects(evaluate(config,{}, {},undefined,async()=>new Response(broken)),{name:'JevError',category:'transport',message:'jev_transport'});
+  const abort=new AbortController();
+  const reason=new DOMException('The caller cancelled','AbortError');
+  const cancelled=new ReadableStream({pull(controller){abort.abort(reason);controller.error(reason);}});
+  await assert.rejects(evaluate(config,{}, {},abort.signal,async()=>new Response(cancelled)),error=>error===reason);
 });
 
 test('shared choice parser rejects invalid confidence and uses only the selected probability',()=>{
@@ -95,6 +138,19 @@ test('unknown choices and malformed answers cannot become confident decisions',a
     assert.ok(Number.isNaN(d.reasoning.confidence));
     assert.ok(d.tool.mode==='passthrough'||Number.isNaN(d.tool.confidence));
   }
+});
+
+test('invalid evaluator answers are observable without suppressing independently valid decisions',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'fake'});
+  for(const [dimension,invalid] of [['tool',undefined],['tool',choice('invented')],['tool',choice('t0',2)],['effort',undefined],['effort',choice('ultra')],['effort',choice('low',-1)]]){
+    const answers={tool:choice('t0'),effort:choice('low'),[dimension]:invalid};
+    const decision=await new JevDecisionEngine(config,async()=>Response.json({answers})).decide(state);
+    assert.deepEqual(decision.evaluator.invalidAnswers,[dimension]);
+    if(dimension==='tool')assert.deepEqual(decision.reasoning,{effort:'low',confidence:.99});
+    else assert.deepEqual(decision.tool,{mode:'forced',name:'select',confidence:.99});
+  }
+  const decision=await new JevDecisionEngine(config,async()=>Response.json({answers:{tool:choice('passthrough',.1),effort:choice('medium',.1)}})).decide(state);
+  assert.equal(decision.evaluator.invalidAnswers,undefined);
 });
 
 test('uncertain arguments retain confident forcing; optional arguments may be omitted',async()=>{

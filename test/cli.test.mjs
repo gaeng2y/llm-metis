@@ -50,7 +50,12 @@ test('CLI lifecycle, flags, task metrics, and unchanged Codex config',async t=>{
     assert.equal(acl.protected,true);
     assert.deepEqual(acl.rules,[{sid:acl.currentSid,inherited:false,type:'Allow',rights:'FullControl'}]);
   }else assert.equal((await stat(statePath)).mode&0o777,0o600);
-  assert.equal(JSON.parse((await cli('--status')).stdout).service,'llm-metis');
+  const status=JSON.parse((await cli('--status')).stdout);
+  assert.equal(status.service,'llm-metis');
+  assert.equal(status.jevConfigured,true);
+  assert.equal(status.observations.evaluation.state,'not_evaluated');
+  assert.equal(status.observations.evaluation.attempts,0);
+  assert.equal(status.observations.routing.appliedDenominator,0);
   await cli('--tool-routing','off');assert.equal(JSON.parse((await cli('--status')).stdout).toolRouting,false);
   await cli('--routing','off');assert.equal(JSON.parse((await cli('--status')).stdout).effortRouting,false);
   await cli('--effort-routing','on');assert.equal(JSON.parse((await cli('--status')).stdout).effortRouting,true);
