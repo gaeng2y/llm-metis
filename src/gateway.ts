@@ -82,7 +82,7 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
     // Claude credentials live only in its loopback base URL, never in headers sent to another origin.
     const claudePath = /^\/anthropic\/([a-f0-9]{64})\/([\w-]{1,80})(\/v1\/messages(?:\/count_tokens)?)$/.exec(url.pathname);
     if (!equalToken(req.headers['x-metis-token'], token) && !(claudePath && equalToken(claudePath[1], token))) return json(res, 401, { error: 'Private local token required' });
-    if (url.pathname === '/control/status' && req.method === 'GET') return json(res, 200, { service: 'llm-metis', version: '0.1.0', pid: process.pid, protocols: ['responses','messages'], ...routing, upstream: config.upstreamBaseUrl, anthropicUpstream: config.anthropicBaseUrl, provider: config.provider, jevConfigured: Boolean(config.jevApiKey), directCalls: config.directCalls });
+    if (url.pathname === '/control/status' && req.method === 'GET') return json(res, 200, { service: 'llm-metis', version: '0.1.0', pid: process.pid, protocols: ['responses','messages'], ...routing, upstream: config.upstreamBaseUrl, anthropicUpstream: config.anthropicBaseUrl, provider: config.provider, jevConfigured: Boolean(config.jevApiKey), directCalls: config.directCalls, observations: metrics.observations() });
     if (url.pathname === '/control/metrics' && req.method === 'GET') return json(res, 200, metrics.snapshot());
     if (url.pathname === '/control/routing' && req.method === 'POST') {
       const value = parseBody(await readBody(req, 4096));

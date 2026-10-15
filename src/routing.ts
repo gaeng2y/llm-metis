@@ -2,10 +2,13 @@ import { object, probability, validArguments, type ControlDecision, type Decisio
 import { extractState } from './state.js';
 import { extractAnthropicState } from './anthropic.js';
 import type { Config } from './config.js';
+import { JevError, type JevFailure } from './jev.js';
 
+let evaluationSequence = 0;
 export interface RouteResult {
   request: JsonObject; mode: Mode; reason: string; effortApplied: boolean;
   jevCalled: boolean; jevLatencyMs: number; decision?: ControlDecision;
+  jevOutcome?: 'succeeded' | 'failed' | 'cancelled'; jevFailure?: JevFailure | 'timeout'; jevCompletedAt?: string; jevSequence?: number;
   direct?: { name: string; arguments: JsonObject };
 }
 export async function control(request: JsonObject, engine: DecisionEngine, config: Config, signal?: AbortSignal, protocol: 'responses' | 'messages' = 'responses'): Promise<RouteResult> {
@@ -34,8 +37,12 @@ export async function control(request: JsonObject, engine: DecisionEngine, confi
       timer = setTimeout(() => abort.abort(new Error('deadline')), config.timeoutMs);
     });
     const decision = await Promise.race([Promise.resolve().then(() => engine.decide(state, combined)), deadline]);
-    if (!object(decision) || !object(decision.tool) || !object(decision.reasoning)) throw Error('invalid_decision');
+    if (!object(decision) || !object(decision.tool) || !object(decision.reasoning)) throw new JevError('invalid_response');
     result.decision = decision;
+    result.jevOutcome = 'succeeded';
+    if ((routeTool && decision.evaluator?.invalidAnswers?.includes('tool')) || (routeEffort && decision.evaluator?.invalidAnswers?.includes('effort'))) {
+      result.jevOutcome = 'failed'; result.jevFailure = 'invalid_response';
+    }
     const { tool, reasoning } = decision;
     if (routeTool && probability(tool.confidence) && tool.confidence >= config.toolMinConfidence) {
       const selected = state.availableTools.find(t => t.name === tool.name);
@@ -56,13 +63,18 @@ export async function control(request: JsonObject, engine: DecisionEngine, confi
       }
     }
     result.reason = result.mode === 'direct' || result.request !== request ? 'applied' : 'confidence_or_constraints';
-  } catch {
+  } catch (error) {
     result.request = request; result.mode = 'passthrough'; result.effortApplied = false; delete result.direct; delete result.decision;
-    result.reason = abort.signal.aborted ? 'jev_timeout' : 'jev_error';
+    const cancelled = signal?.aborted && combined.reason === signal.reason;
+    result.reason = cancelled ? 'jev_cancelled' : abort.signal.aborted ? 'jev_timeout' : 'jev_error';
+    result.jevOutcome = cancelled ? 'cancelled' : 'failed';
+    result.jevFailure = cancelled ? undefined : abort.signal.aborted ? 'timeout' : error instanceof JevError ? error.category : 'unknown';
   } finally {
     clearTimeout(timer);
     if (onAbort) combined.removeEventListener('abort', onAbort);
     result.jevLatencyMs = performance.now() - started;
+    result.jevCompletedAt = new Date().toISOString();
+    result.jevSequence = ++evaluationSequence;
   }
   return result;
 }

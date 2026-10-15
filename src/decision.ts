@@ -7,7 +7,7 @@ export type Mode = 'direct' | 'forced' | 'none' | 'passthrough';
 export interface ControlDecision {
   tool: { mode: Mode; name?: string; confidence: number; arguments?: JsonObject; reason?: string };
   reasoning: { effort: Effort; confidence: number; reason?: string };
-  evaluator?: { model?: string; inputTokens?: number; outputTokens?: number };
+  evaluator?: { model?: string; inputTokens?: number; outputTokens?: number; invalidAnswers?: ('tool' | 'effort')[] };
 }
 export interface AvailableTool {
   name: string;

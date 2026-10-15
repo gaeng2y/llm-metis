@@ -9,6 +9,7 @@ export interface RequestMetric {
   mode: string; reason: string; selectedTool?: string; toolConfidence?: number;
   selectedEffort?: string; effortConfidence?: number; appliedEffort?: string; effortApplied: boolean;
   jevProvider: string; jevModel: string; jevCalled: boolean; jevLatencyMs: number;
+  jevOutcome?: RouteResult['jevOutcome']; jevFailure?: RouteResult['jevFailure']; jevCompletedAt?: string; jevSequence?: number;
   jevInputTokens?: number; jevOutputTokens?: number;
   modelLatencyMs: number; requestLatencyMs: number; status: number; outcome: string;
   inputTokens?: number; cachedInputTokens?: number; outputTokens?: number; reasoningTokens?: number;
@@ -24,6 +25,46 @@ export class Metrics {
   }
   addTask(task: TaskMetric) { this.tasks.push(task); if (this.tasks.length > 200) this.tasks.shift(); }
   snapshot() { return { startedAt: this.startedAt, requests: this.requests, tasks: this.tasks }; }
+  observations() {
+    const evaluation = {
+      state: 'not_evaluated' as 'not_evaluated' | NonNullable<RouteResult['jevOutcome']>,
+      attempts: 0, successes: 0, failures: 0, cancellations: 0,
+      latest: null as null | { time: string; outcome: NonNullable<RouteResult['jevOutcome']>; failure?: RouteResult['jevFailure'] },
+      failureReasons: Object.create(null) as Record<string, number>,
+    };
+    const routing = { toolApplied: 0, effortApplied: 0, appliedDenominator: this.requests.length, passthrough: 0,
+      passthroughReasons: Object.create(null) as Record<string, number>, rewriteRejections: 0 };
+    let latestSequence = -1;
+    for (const event of this.requests) {
+      if (event.jevCalled) {
+        evaluation.attempts++;
+        const outcome = event.jevOutcome ?? 'failed';
+        const failure = event.jevFailure ?? (outcome === 'failed' ? 'unknown' : undefined);
+        if (outcome === 'succeeded') evaluation.successes++;
+        else if (outcome === 'cancelled') evaluation.cancellations++;
+        else { evaluation.failures++; evaluation.failureReasons[failure!] = (evaluation.failureReasons[failure!] ?? 0) + 1; }
+        const time = event.jevCompletedAt ?? event.time;
+        // Wall-clock timestamps can tie; model responses can finish in a different order.
+        if ((event.jevSequence ?? 0) >= latestSequence) {
+          latestSequence = event.jevSequence ?? 0;
+          evaluation.latest = { time, outcome, ...(failure ? { failure } : {}) };
+        }
+      }
+      if (event.mode !== 'passthrough') routing.toolApplied++;
+      if (event.effortApplied) routing.effortApplied++;
+      if (event.mode === 'passthrough' && !event.effortApplied) {
+        routing.passthrough++;
+        routing.passthroughReasons[event.reason] = (routing.passthroughReasons[event.reason] ?? 0) + 1;
+      }
+      if (event.reason === 'upstream_rejected_rewrite') routing.rewriteRejections++;
+    }
+    evaluation.state = evaluation.latest?.outcome ?? 'not_evaluated';
+    return {
+      startedAt: this.startedAt, windowStartedAt: this.requests[0]?.time ?? null,
+      windowEndedAt: this.requests.at(-1)?.time ?? null, retainedRequests: this.requests.length, requestLimit: 2000,
+      evaluation, routing,
+    };
+  }
 }
 export function routeMetric(result: RouteResult, config: Config) {
   const d = result.decision;
@@ -37,6 +78,7 @@ export function routeMetric(result: RouteResult, config: Config) {
     appliedEffort: result.mode !== 'direct' && typeof effort === 'string' ? effort.slice(0, 30) : undefined,
     jevProvider: config.provider, jevModel: d?.evaluator?.model ?? config.jevModel,
     jevCalled: result.jevCalled, jevLatencyMs: result.jevLatencyMs,
+    jevOutcome: result.jevOutcome, jevFailure: result.jevFailure, jevCompletedAt: result.jevCompletedAt, jevSequence: result.jevSequence,
     jevInputTokens: d?.evaluator?.inputTokens, jevOutputTokens: d?.evaluator?.outputTokens,
   };
 }

@@ -118,7 +118,7 @@ const help = `metis-codex [-- <codex arguments>]
   config-path             Show the user configuration file path
   --start                 Start local background gateway
   --stop                  Gracefully stop this gateway
-  --status                Show status without starting
+  --status                Show configuration and observed evaluation/routing (no probe)
   --routing on|off        Enable/disable both decisions
   --tool-routing on|off   Toggle tool decisions
   --effort-routing on|off Toggle effort decisions
