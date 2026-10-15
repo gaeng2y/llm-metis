@@ -92,7 +92,14 @@ metis-codex --start
 metis-codex --status
 ```
 
-`jevConfigured: true` confirms that a key was loaded; it does not verify the key or a live Jev decision. Check the dashboard after a task for successful evaluation and applied effort.
+`--status` and the dashboard separate current configuration from observed evaluation and routing. `jevConfigured: true` only confirms that a key was loaded; it does not verify the key. Reading status never makes a provider request.
+
+- `observations.evaluation` reports the latest observed result and time, successful evaluations / attempts, failures, and cancellations. `not_evaluated` means no evaluation was attempted in the retained window. Attempts count decision invocations, including local failures before a network request; they are not a billing count.
+- Failure categories include `authentication`, `rate_limit`, `timeout`, `transport`, `invalid_response`, `provider_error`, `context_limit`, `credentials_missing`, and `unknown`. Raw provider error messages are not exposed. A partially valid response can still apply one routing decision while recording `invalid_response`.
+- `observations.routing` reports tool and effort application separately, with all retained generation requests as the denominator. Counts reflect the final request after fallback; disabling tool use also counts as tool routing. It also reports complete passthrough reasons and rejected rewrites. **Passthrough rate is not task success rate.** Applied routing does not establish upstream completion, output quality, or savings.
+- Observations cover the last 2,000 finished generation requests across all modes. Request-window timestamps, the latest evaluation time, and gateway start time show their age. Restarting clears them; changing routing does not. Older gateways without observations display them as unavailable, not successful.
+
+Run a task, then check its observed evaluation and applied routing. An earlier successful evaluation does not verify the current provider connection.
 
 <a id="commands"></a>
 
@@ -201,7 +208,7 @@ The rules below describe Codex Responses routing. Claude Messages uses the same 
 - `direct` requires explicit opt-in and `store:false`. It validates function arguments from finite sets and synthesizes a Responses function call. **The gateway never executes tools.** Free-text arguments or unsupported JSON Schema constraints leave argument generation to the main model. Both JSON and SSE responses are supported. Effort is not applied on this path.
 - Tool extraction supports `additional_tools` and namespaces. Hosted tools and tools outside the default `functions` namespace are considered as candidates but are not forced. More than 120 tools skips tool routing without adding a second Jev call.
 - Requests with hidden server history through `previous_response_id`, `conversation`, or opaque item references are forwarded without evaluation. A `configuration_update` skips effort rewriting. `/responses/compact` is also forwarded unchanged.
-- Jev errors, timeouts, or invalid answers fall back to the original request. If the upstream rejects a rewrite with HTTP 400/422, the gateway retries once with the original request. Successful responses and streams that have already started are never retried.
+- Jev errors or timeouts fall back to the original request. Invalid tool or effort answers leave that decision unchanged; a valid independent decision can still apply. If the upstream rejects a rewrite with HTTP 400/422, the gateway retries once with the original request. Successful responses and streams that have already started are never retried.
 
 </details>
 

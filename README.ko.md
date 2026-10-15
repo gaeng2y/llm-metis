@@ -92,7 +92,14 @@ metis-codex --start
 metis-codex --status
 ```
 
-`jevConfigured: true`는 키를 불러왔다는 뜻이며, 키의 유효성이나 실제 Jev 판단 성공을 검증한 것은 아닙니다. 작업 실행 후 대시보드에서 평가 성공 여부와 적용된 effort를 확인하세요.
+`--status`와 대시보드는 현재 설정과 관측된 평가·라우팅 결과를 구분합니다. `jevConfigured: true`는 키를 불러왔다는 뜻이며, 키의 유효성을 검증한 것은 아닙니다. 상태 조회는 provider 요청을 발생시키지 않습니다.
+
+- `observations.evaluation`은 최근 관측 결과와 시각, 평가 성공/시도 횟수, 실패와 취소 횟수를 표시합니다. `not_evaluated`는 보관 중인 구간에 평가 시도가 없다는 뜻입니다. 시도 횟수에는 네트워크 요청 전 로컬 실패도 포함되므로 과금 요청 수와 다릅니다.
+- 실패는 `authentication`, `rate_limit`, `timeout`, `transport`, `invalid_response`, `provider_error`, `context_limit`, `credentials_missing`, `unknown` 범주로 표시하며 provider 오류 원문은 노출하지 않습니다. 응답 일부만 유효하면 `invalid_response`를 기록하면서 유효한 라우팅 판단 하나를 적용할 수 있습니다.
+- `observations.routing`은 보관 중인 전체 생성 요청을 분모로 도구와 effort 적용 횟수를 각각 표시합니다. 원본 복귀까지 반영한 최종 요청 기준이며, 도구 사용을 끄는 판단도 도구 라우팅에 포함됩니다. 완전 통과 사유와 변경 요청 거절 횟수도 표시합니다. **Passthrough rate는 작업 성공률이 아닙니다.** 라우팅 적용 자체가 upstream 완료, 결과 품질, 비용 절감을 증명하지는 않습니다.
+- 관측 범위는 모든 라우팅 모드에 걸친 최근 완료된 생성 요청 2,000개입니다. 요청 구간 시각, 최근 평가 시각, 게이트웨이 시작 시각으로 데이터가 얼마나 오래되었는지 확인할 수 있습니다. 재시작하면 초기화되며 라우팅 변경만으로는 초기화되지 않습니다. 관측 기능이 없는 구버전 게이트웨이는 성공 대신 조회 불가로 표시됩니다.
+
+작업을 실행한 뒤 관측된 평가와 적용된 라우팅을 확인하세요. 과거 평가 성공이 현재 provider 연결까지 검증하지는 않습니다.
 
 <a id="commands"></a>
 
@@ -201,7 +208,7 @@ Windows에서는 네이티브 `codex.exe` / `claude.exe`와 표준 npm 설치의
 - `direct`는 명시적 활성화와 `store:false`가 필요합니다. 유한한 선택지의 함수 인자를 검증하고 Responses 함수 호출을 합성합니다. **게이트웨이는 도구를 실행하지 않습니다.** 자유 텍스트 인자나 지원하지 않는 JSON Schema 제약은 주 모델에 인자 생성을 맡깁니다. JSON과 SSE 응답을 모두 지원하며, 이 경로에서는 effort를 적용하지 않습니다.
 - 도구 추출은 `additional_tools`와 namespace를 지원합니다. hosted 도구와 기본 `functions` namespace 외의 도구는 후보로 고려하지만 강제하지 않습니다. 도구가 120개를 넘으면 두 번째 Jev 호출 없이 도구 라우팅을 건너뜁니다.
 - `previous_response_id`, `conversation`, opaque item reference로 서버 이력이 숨겨진 요청은 평가 없이 전달합니다. `configuration_update`가 있으면 effort 변경을 건너뜁니다. `/responses/compact`도 그대로 전달합니다.
-- Jev 오류, 시간 초과, 잘못된 응답은 원본 요청으로 복귀합니다. upstream이 변경된 요청을 HTTP 400/422로 거절하면 원본으로 한 번 재시도합니다. 성공한 응답이나 이미 시작된 스트림은 재시도하지 않습니다.
+- Jev 오류나 시간 초과는 원본 요청으로 복귀합니다. 도구 또는 effort 응답이 잘못되면 해당 판단은 변경하지 않으며, 독립적으로 유효한 다른 판단은 적용할 수 있습니다. upstream이 변경된 요청을 HTTP 400/422로 거절하면 원본으로 한 번 재시도합니다. 성공한 응답이나 이미 시작된 스트림은 재시도하지 않습니다.
 
 </details>
 

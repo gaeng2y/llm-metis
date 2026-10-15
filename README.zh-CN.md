@@ -92,7 +92,14 @@ metis-codex --start
 metis-codex --status
 ```
 
-`jevConfigured: true` 仅表示已加载密钥，并不代表密钥有效或实际 Jev 决策已成功。执行任务后，请在仪表盘中检查评估是否成功以及实际应用的 effort。
+`--status` 和仪表盘将当前配置与已观测到的评估、路由结果分开显示。`jevConfigured: true` 仅表示已加载密钥，不代表密钥有效。读取状态不会向服务商发送请求。
+
+- `observations.evaluation` 显示最近观测结果及时间、评估成功数/尝试数、失败数和取消数。`not_evaluated` 表示保留窗口内没有评估尝试。尝试数包含网络请求前的本地失败，因此不等于计费请求数。
+- 失败分类包括 `authentication`、`rate_limit`、`timeout`、`transport`、`invalid_response`、`provider_error`、`context_limit`、`credentials_missing` 和 `unknown`，不暴露服务商错误原文。响应部分有效时，可以记录 `invalid_response`，同时应用有效的路由决策。
+- `observations.routing` 以保留的全部生成请求为分母，分别显示工具和 effort 的应用次数。计数以回退后的最终请求为准，禁用工具的决策也算工具路由。同时显示完全透传的原因和改写被拒绝的次数。**Passthrough rate 不是任务成功率。** 应用路由本身并不证明 upstream 完成、输出质量或成本节省。
+- 观测范围是所有路由模式下最近结束的2,000个生成请求。请求窗口时间、最近评估时间和网关启动时间可用于判断数据的新旧。重启会清空数据，修改路由不会清空。旧网关不提供观测数据时，显示不可用而不是成功。
+
+执行任务后，请检查观测到的评估和已应用的路由。过去评估成功并不能验证当前服务商连接。
 
 <a id="commands"></a>
 
@@ -201,7 +208,7 @@ Windows 支持原生 `codex.exe` / `claude.exe` 和标准 npm 安装生成的 `c
 - `direct` 需要显式启用，并要求 `store:false`。它验证取值来自有限集合的函数参数，然后合成 Responses 函数调用。**网关本身不执行工具。** 如果参数包含自由文本或不支持的 JSON Schema 约束，则由主模型生成参数。支持 JSON 和 SSE 响应，此路径不应用 effort。
 - 工具提取支持 `additional_tools` 和 namespace。hosted 工具以及默认 `functions` namespace 之外的工具会作为候选项考虑，但不会强制指定。工具超过120个时，跳过工具路由，不增加第二次 Jev 调用。
 - 如果请求通过 `previous_response_id`、`conversation` 或 opaque item reference 引用了不可见的服务器端历史，则不进行评估，直接转发。存在 `configuration_update` 时跳过 effort 改写。`/responses/compact` 也原样转发。
-- Jev 报错、超时或返回无效答案时，回退到原始请求。如果 upstream 以 HTTP 400/422 拒绝改写后的请求，网关会用原始请求重试一次。成功的响应或已经开始的流不会重试。
+- Jev 报错或超时时，回退到原始请求。工具或 effort 答案无效时，保留该项原有设置；另一项独立有效的决策仍可应用。如果 upstream 以 HTTP 400/422 拒绝改写后的请求，网关会用原始请求重试一次。成功的响应或已经开始的流不会重试。
 
 </details>
 
