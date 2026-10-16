@@ -239,6 +239,7 @@ export async function main(args = process.argv.slice(2), client: 'codex' | 'clau
     console.log(`Dashboard opened at ${origin(instance)}/dashboard`); return;
   }
   const taskId = randomUUID();
+  const launchCohort = cohort({ toolRouting: Boolean(status.toolRouting), effortRouting: Boolean(status.effortRouting) });
   const started = performance.now();
   const childEnv: NodeJS.ProcessEnv = { ...process.env, METIS_CONTROL_TOKEN: instance.token, METIS_CONTROL_TASK_ID: taskId };
   for (const name of Object.keys(childEnv)) {
@@ -262,10 +263,11 @@ export async function main(args = process.argv.slice(2), client: 'codex' | 'clau
       const at = delimiter < 0 ? userArgs.length : delimiter;
       launch = codexLaunch(process.env.METIS_CODEX_BIN ?? 'codex', [...userArgs.slice(0, at), ...codexArgs(origin(instance)), ...userArgs.slice(at)], childEnv);
     }
+    if (status.accountingVersion === 1) await api(instance, 'task/start', { id: taskId, cohort: launchCohort }).catch(() => {});
     child = spawn(launch.file, launch.args, { stdio: 'inherit', env: childEnv });
     process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
     const [code, signal] = await once(child, 'exit');
-    await api(instance, 'task', { id: taskId, cohort: cohort({ toolRouting: Boolean(status.toolRouting), effortRouting: Boolean(status.effortRouting) }), durationMs: performance.now() - started, exitCode: code }).catch(() => {});
+    await api(instance, 'task', { id: taskId, cohort: launchCohort, durationMs: performance.now() - started, exitCode: code }).catch(() => {});
     process.exitCode = typeof code === 'number' ? code : signal === 'SIGINT' ? 130 : 1;
   } finally {
     process.off('SIGINT', interrupt); process.off('SIGTERM', terminate);

@@ -10,8 +10,10 @@
 <section class="panel"><h2>Routing</h2><div class="controls"><label for="mode">Active mode</label><select id="mode"><option value="baseline">Baseline</option><option value="tool-only">Tool routing only</option><option value="effort-only">Effort routing only</option><option value="tool+effort">Tool + effort routing</option></select><button id="apply">Apply to future requests</button><button id="refresh">Refresh</button></div><p class="note subtle" id="config"></p><div id="error" role="status" aria-live="polite"></div></section>
 <section class="grid" aria-label="Observed routing"><div class="panel"><div class="label">Finished requests retained</div><div class="stat" id="requests">—</div></div><div class="panel"><div class="label">Evaluations succeeded / attempted</div><div class="stat" id="calls">—</div></div><div class="panel"><div class="label">Tool routing applied</div><div class="stat" id="tool-applied">—</div><div class="label" id="tool-rate"></div></div><div class="panel"><div class="label">Effort routing applied</div><div class="stat" id="effort-applied">—</div><div class="label" id="effort-rate"></div></div></section>
 <section class="panel"><h2>Observed evaluation and routing</h2><p id="evaluation" role="status" aria-live="polite"></p><p id="evaluation-counts"></p><p id="routing-counts"></p><p class="note subtle" id="observation-window"></p><div class="scroll"><table><thead><tr><th>Observation</th><th>Category</th><th>Count</th></tr></thead><tbody id="diagnostics"></tbody></table></div><p class="note subtle">Status refreshes do not call Jev. An attempt can fail before any provider request, so it is not a billing count. Applied routing reflects the final request after fallback; disabling tool use also counts as tool routing. A partially valid evaluation can still apply one decision. These counts do not establish upstream completion, task quality, or savings.</p></section>
-<section class="panel"><h2>Four-mode comparison</h2><div class="scroll"><table><thead><tr><th>Mode</th><th>Requests</th><th>Input Σ</th><th>Cached Σ</th><th>Output Σ</th><th>Reasoning Σ</th><th>Model avg</th><th>Jev avg</th><th>Total avg</th><th>Passthrough rate</th><th>Effort L / M / H</th><th>Failures</th></tr></thead><tbody id="comparison"></tbody></table></div><p class="note subtle">Token totals include only reported usage; “—” means unknown. Averages include only applicable calls. Direct calls have no upstream inference. Effort distribution uses the outgoing request, not unaccepted proposals. Cache tokens are a subset of input tokens. Passthrough rate is the share of requests with neither tool nor effort routing applied; it is not a task success rate.</p></section>
-<section class="panel"><h2>Completed wrapper sessions</h2><div class="scroll"><table><thead><tr><th>Mode at launch</th><th>Sessions</th><th>Average duration</th><th>Successful exits</th></tr></thead><tbody id="tasks"></tbody></table></div><p class="note subtle">Wrapper duration includes tools and user wait time. Use one <code>metis-codex -- exec …</code> task per session and keep its mode fixed for comparable task timings. Interactive sessions are not individual task measurements.</p></section>
+<section class="panel"><h2>Reported token usage</h2><button id="export">Download metrics JSON</button><p class="note subtle" id="usage-window"></p><div class="scroll"><table><thead><tr><th>Calls</th><th>Coverage</th><th>Complete / attempted</th><th>Known total</th><th>Input</th><th>Uncached input</th><th>Cache read</th><th>Cache write</th><th>Write 5m</th><th>Write 1h</th><th>Output</th><th>Reasoning</th></tr></thead><tbody id="usage"></tbody></table></div><p class="note subtle">Totals include retained model calls, retries, compaction and Jev evaluations, including failed or cancelled attempts with reported usage. Unknown usage is never treated as zero. A field marked “n / m reported” has incomplete coverage, even when input/output totals are complete. Input already includes cache reads and writes; output already includes reasoning. These subsets are not added again. Tokens are not monetary cost, and differently priced models cannot be compared by token count alone.</p></section>
+<section class="panel"><h2>Four-mode task comparison</h2><div class="scroll"><table><thead><tr><th>Mode</th><th>Tasks</th><th>Complete task usage</th><th>Ended</th><th>Known model total</th><th>Known Jev total</th><th>Known combined total</th><th>Complete / attempted calls</th><th>Average ended duration</th><th>Successful / other exits</th></tr></thead><tbody id="task-comparison"></tbody></table></div><p class="note subtle" id="task-exclusions"></p><p class="note subtle">Only tasks with a confirmed start and end, no active requests, and complete retained usage are complete. Partial totals include known overhead and are not complete savings comparisons. Failed and cancelled tasks remain in these totals; exit status and usage completeness are independent.</p></section>
+<section class="panel"><h2>Task usage</h2><div class="scroll"><table><thead><tr><th>Task</th><th>Observed mode</th><th>Lifecycle</th><th>Usage status / reason</th><th>Known model total</th><th>Known Jev total</th><th>Known combined total</th><th>Complete / attempted calls</th><th>Retained / active requests</th><th>Duration</th><th>Exit</th></tr></thead><tbody id="tasks"></tbody></table></div><p class="note subtle">Expand a task for model and Jev token details. Wrapper duration includes tools and user wait time. Use one <code>metis-codex -- exec …</code> task per session and keep its mode fixed for comparable task timings. Interactive sessions are not individual task measurements.</p></section>
+<section class="panel"><h2>Request observations by mode</h2><div class="scroll"><table><thead><tr><th>Mode</th><th>Requests</th><th>Model avg</th><th>Jev avg</th><th>Total avg</th><th>Passthrough rate</th><th>Effort L / M / H</th><th>Failures</th></tr></thead><tbody id="comparison"></tbody></table></div><p class="note subtle">Averages include only applicable calls. Direct calls have no upstream inference. Effort distribution uses the outgoing request, not unaccepted proposals. Passthrough rate is the share of requests with neither tool nor effort routing applied; it is not a task success rate.</p></section>
 <section class="panel"><h2>Recent decisions</h2><div class="scroll"><table><thead><tr><th>Time / mode</th><th>Tool proposal</th><th>Confidence</th><th>Effort proposal → outgoing</th><th>Confidence</th><th>Applied routing</th><th>Reason / outcome</th></tr></thead><tbody id="recent"></tbody></table></div><p class="note subtle" id="retention"></p></section>
 <p class="note subtle">Compare identical tasks, models and starting effort across modes; verify output quality. These observations do not establish cost savings or Ares-style cache preservation. Prompts, tool arguments and credentials are not collected here. Public context is sent to your configured Jev provider when routing is enabled.</p>
 </main>
@@ -22,13 +24,52 @@ const token = sessionStorage.getItem('metis-token') || '';
 const $ = id => document.getElementById(id);
 const labels = {'baseline':'Baseline','tool-only':'Tool only','effort-only':'Effort only','tool+effort':'Tool + effort'};
 const modes = Object.keys(labels);
+const modeLabel = mode => labels[mode] ?? (mode === 'mixed' ? 'Mixed' : 'Unknown');
 const format = n => n === undefined || n === null ? '—' : Math.round(n).toLocaleString();
 const mean = xs => xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : undefined;
-const sum = (xs,key) => { const values=xs.map(x=>x[key]).filter(x=>typeof x==='number'); return values.length ? format(values.reduce((a,b)=>a+b,0))+(values.length<xs.length?'*':'') : '—'; };
 const ms = n => n === undefined ? '—' : `${format(n)} ms`;
 const percent = (n,d) => d ? `${Math.round(n/d*100)}%` : '—';
 const date = value => value ? new Date(value).toLocaleString() : '—';
-function row(parent,values){const tr=document.createElement('tr');for(const value of values){const td=document.createElement('td');td.textContent=value??'—';tr.append(td);}parent.append(tr);}
+function row(parent,values,header=false){const tr=document.createElement('tr');for(const value of values){const td=document.createElement(header?'th':'td');if(header)td.scope='col';td.textContent=value??'—';tr.append(td);}parent.append(tr);}
+const usageFields = ['inputTokens','uncachedInputTokens','cachedInputTokens','cacheWriteInputTokens','cacheWrite5mInputTokens','cacheWrite1hInputTokens','outputTokens','reasoningTokens'];
+const usageHeaders = ['Calls','Coverage','Complete / attempted','Known total','Input','Uncached input','Cache read','Cache write','Write 5m','Write 1h','Output','Reasoning'];
+const usageState = summary => summary?.complete ? 'Complete' : summary?.reportedAttempts ? 'Partial' : 'Unknown';
+const coverage = summary => summary ? `${format(summary.completeAttempts)} / ${format(summary.attempts)} (${format(summary.reportedAttempts)} reported)` : 'Unknown';
+const knownTotal = summary => summary ? `${format(summary.knownTotalTokens)} · ${usageState(summary)}` : '— · Unknown';
+function fieldUsage(summary,field){const covered=summary?.fieldCoverage?.[field];return format(summary?.usage[field])+(covered&&covered.reported<covered.attempts?` · ${format(covered.reported)} / ${format(covered.attempts)} reported`:'');}
+function usageRows(parent,data){
+  for(const [key,label] of [['model','Model'],['evaluator','Jev'],['combined','Combined']]){
+    const summary=data?.[key];
+    row(parent,[label,usageState(summary)+(summary?.reasons.length?' · '+summary.reasons.join(', '):''),coverage(summary),format(summary?.knownTotalTokens),...usageFields.map(field=>fieldUsage(summary,field))]);
+  }
+}
+function groupUsage(tasks,key){
+  const summaries=tasks.map(task=>task[key]);
+  const totals=summaries.map(summary=>summary.knownTotalTokens).filter(value=>typeof value==='number');
+  return {knownTotalTokens:totals.length?totals.reduce((a,b)=>a+b,0):undefined,complete:tasks.length>0&&tasks.every(task=>task.complete&&task[key].complete),attempts:summaries.reduce((n,s)=>n+s.attempts,0),reportedAttempts:summaries.reduce((n,s)=>n+s.reportedAttempts,0),completeAttempts:summaries.reduce((n,s)=>n+s.completeAttempts,0)};
+}
+function renderUsage(data){
+  for(const id of ['usage','task-comparison','tasks'])$(id).replaceChildren();
+  usageRows($('usage'),data.usage);
+  const tasks=data.taskUsage;
+  $('usage-window').textContent=data.usage?`Retained reported usage across all tasks and ${format(data.unassignedRequests)} requests without a task ID. Active requests: ${format(data.activeRequests)} · Evicted requests: ${format(data.droppedRequests)}. Deleted history and in-flight usage are not a complete lifetime total.`:'Usage accounting unavailable from this gateway. Update and restart after active tasks finish.';
+  if(!Array.isArray(tasks)){
+    $('task-exclusions').textContent='Task usage unavailable. Legacy completed-session records cannot establish complete task usage.';
+    for(const task of data.tasks??[])row($('tasks'),[task.id,modeLabel(task.cohort),'Ended','Unknown · start and usage unconfirmed','—','—','—','Unknown','—',ms(task.durationMs),task.exitCode??'Signal / unknown']);
+    return;
+  }
+  for(const mode of modes){
+    const xs=tasks.filter(task=>task.cohort===mode), ended=xs.filter(task=>task.ended);
+    row($('task-comparison'),[labels[mode],xs.length,xs.filter(task=>task.complete).length,ended.length,...['model','evaluator','combined'].map(key=>knownTotal(groupUsage(xs,key))),coverage(groupUsage(xs,'combined')),ms(mean(ended.map(task=>task.durationMs).filter(value=>typeof value==='number'))),`${ended.filter(task=>task.exitCode===0).length} / ${ended.filter(task=>task.exitCode!==0).length}`]);
+  }
+  $('task-exclusions').textContent=`Excluded from the four-mode comparison: ${format(tasks.filter(task=>task.cohort==='mixed').length)} mixed and ${format(tasks.filter(task=>task.cohort==='unknown').length)} unknown-mode tasks. Their known usage remains in the overall totals and task rows.`;
+  for(const task of tasks.slice().reverse()){
+    const state=task.complete?'Complete':task.combined.reportedAttempts?'Partial':'Unknown';
+    row($('tasks'),[task.id,modeLabel(task.cohort)+(task.launchCohort?' · launched '+modeLabel(task.launchCohort):''),task.ended?'Ended':'End unconfirmed',state+(task.reasons.length?' · '+task.reasons.join(', '):''),knownTotal(task.model),knownTotal(task.evaluator),knownTotal(task.combined),coverage(task.combined),`${format(task.requestCount)} / ${format(task.activeRequests)}`,ms(task.durationMs),task.ended?(task.exitCode??'Signal / unknown'):'—']);
+    const tr=document.createElement('tr'),td=document.createElement('td'),details=document.createElement('details'),summary=document.createElement('summary'),table=document.createElement('table'),head=document.createElement('thead'),body=document.createElement('tbody');
+    td.colSpan=11;summary.textContent='Token breakdown';row(head,usageHeaders,true);usageRows(body,task);table.append(head,body);details.append(summary,table);td.append(details);tr.append(td);$('tasks').append(tr);
+  }
+}
 function renderObservations(status){
   const observed=status.observations;
   $('diagnostics').replaceChildren();
@@ -50,7 +91,7 @@ function renderObservations(status){
   if(evaluation.latest)$('evaluation').textContent+=` · ${date(evaluation.latest.time)}${evaluation.latest.failure?' · '+evaluation.latest.failure:''}`;
   $('evaluation-counts').textContent=`Evaluation failures: ${format(evaluation.failures)} · Cancellations: ${format(evaluation.cancellations)}`;
   $('routing-counts').textContent=`Complete passthrough: ${format(routing.passthrough)} / ${format(routing.appliedDenominator)} (${percent(routing.passthrough,routing.appliedDenominator)}) · Rewrites rejected: ${format(routing.rewriteRejections)}`;
-  $('observation-window').textContent=`Last ${format(observed.requestLimit)} finished generation requests, across all routing modes. Request times: ${date(observed.windowStartedAt)} – ${date(observed.windowEndedAt)}. Gateway started: ${date(observed.startedAt)}. Restarting clears observations; changing routing does not.`;
+  $('observation-window').textContent=`Generation requests retained within the shared ${format(observed.requestLimit)}-request history (generation and compaction), across all routing modes. Request times: ${date(observed.windowStartedAt)} – ${date(observed.windowEndedAt)}. Gateway started: ${date(observed.startedAt)}. Restarting clears observations; changing routing does not.`;
   for(const [label,counts] of [['Evaluation failure',evaluation.failureReasons],['Passthrough',routing.passthroughReasons]]){
     const entries=Object.entries(counts);
     if(!entries.length)row($('diagnostics'),[label,'None observed',0]);
@@ -58,8 +99,26 @@ function renderObservations(status){
   }
 }
 async function api(path,body){const response=await fetch('/control/'+path,{headers:{'x-metis-token':token,'content-type':'application/json'},...(body?{method:'POST',body:JSON.stringify(body)}:{})});if(!response.ok)throw Error(response.status===401?'Open the dashboard using metis-codex --dashboard to authorize this tab.':`Local request failed (${response.status}).`);return response.json();}
-async function refresh(){try{const [status,data]=await Promise.all([api('status'),api('metrics')]);const events=data.requests;const current=status.toolRouting?(status.effortRouting?'tool+effort':'tool-only'):(status.effortRouting?'effort-only':'baseline');if(document.activeElement!==$('mode'))$('mode').value=current;$('connection').textContent='Local connected · '+labels[current];$('config').textContent=`Provider: ${status.provider} · Credentials: ${status.jevConfigured?'present (not verified)':'missing; requests pass through'} · Direct: ${status.directCalls?'enabled':'off'}`;renderObservations(status);$('comparison').replaceChildren();$('tasks').replaceChildren();for(const mode of modes){const xs=events.filter(e=>e.cohort===mode);row($('comparison'),[labels[mode],xs.length,...['inputTokens','cachedInputTokens','outputTokens','reasoningTokens'].map(k=>sum(xs,k)),ms(mean(xs.filter(e=>e.mode!=='direct').map(e=>e.modelLatencyMs))),ms(mean(xs.filter(e=>e.jevCalled).map(e=>e.jevLatencyMs))),ms(mean(xs.map(e=>e.requestLatencyMs))),percent(xs.filter(e=>e.mode==='passthrough'&&!e.effortApplied).length,xs.length),['low','medium','high'].map(v=>xs.filter(e=>e.appliedEffort===v).length).join(' / '),xs.filter(e=>e.outcome!=='completed').length]);const tasks=data.tasks.filter(t=>t.cohort===mode);row($('tasks'),[labels[mode],tasks.length,ms(mean(tasks.map(t=>t.durationMs))),tasks.filter(t=>t.exitCode===0).length]);}$('recent').replaceChildren();for(const e of events.slice(-30).reverse())row($('recent'),[new Date(e.time).toLocaleTimeString()+' / '+labels[e.cohort],e.selectedTool, e.toolConfidence===undefined?'—':e.toolConfidence.toFixed(2),`${e.selectedEffort??'—'} → ${e.appliedEffort??'—'}`,e.effortConfidence===undefined?'—':e.effortConfidence.toFixed(2),e.mode+(e.effortApplied?' + effort':''),e.reason+' / '+e.outcome]);$('retention').textContent=`In-memory window: last 2,000 requests and 200 sessions. Started ${new Date(data.startedAt).toLocaleString()}. * Partial usage coverage.`;$('error').textContent='';}catch(error){$('connection').textContent='Unavailable';$('error').textContent=error.message+' Displayed observations may be stale.';}}
+async function refresh(){try{
+  const [status,data]=await Promise.all([api('status'),api('metrics')]);
+  const events=data.requests.filter(event=>event.kind!=='compaction');
+  const current=status.toolRouting?(status.effortRouting?'tool+effort':'tool-only'):(status.effortRouting?'effort-only':'baseline');
+  if(document.activeElement!==$('mode'))$('mode').value=current;
+  $('connection').textContent='Local connected · '+labels[current];
+  $('config').textContent=`Provider: ${status.provider} · Credentials: ${status.jevConfigured?'present (not verified)':'missing; requests pass through'} · Direct: ${status.directCalls?'enabled':'off'}`;
+  renderObservations(status);renderUsage(data);
+  $('comparison').replaceChildren();
+  for(const mode of modes){
+    const xs=events.filter(e=>e.cohort===mode);
+    row($('comparison'),[labels[mode],xs.length,ms(mean(xs.filter(e=>e.mode!=='direct').map(e=>e.modelLatencyMs))),ms(mean(xs.filter(e=>e.jevCalled).map(e=>e.jevLatencyMs))),ms(mean(xs.map(e=>e.requestLatencyMs))),percent(xs.filter(e=>e.mode==='passthrough'&&!e.effortApplied).length,xs.length),['low','medium','high'].map(v=>xs.filter(e=>e.appliedEffort===v).length).join(' / '),xs.filter(e=>e.outcome!=='completed').length]);
+  }
+  $('recent').replaceChildren();
+  for(const e of events.slice(-30).reverse())row($('recent'),[new Date(e.time).toLocaleTimeString()+' / '+modeLabel(e.cohort),e.selectedTool,e.toolConfidence===undefined?'—':e.toolConfidence.toFixed(2),`${e.selectedEffort??'—'} → ${e.appliedEffort??'—'}`,e.effortConfidence===undefined?'—':e.effortConfidence.toFixed(2),e.mode+(e.effortApplied?' + effort':''),e.reason+' / '+e.outcome]);
+  $('retention').textContent=`In-memory window: last 2,000 requests and 200 sessions. Started ${new Date(data.startedAt).toLocaleString()}. Restarting clears records; evicted history makes affected task totals partial.`;
+  $('error').textContent='';
+}catch(error){$('connection').textContent='Unavailable';$('error').textContent=error.message+' Displayed observations may be stale.';}}
 $('apply').onclick=async()=>{const mode=$('mode').value;try{await api('routing',{toolRouting:['tool-only','tool+effort'].includes(mode),effortRouting:['effort-only','tool+effort'].includes(mode)});await refresh();}catch(error){$('error').textContent=error.message;}};
+$('export').onclick=async()=>{try{const data=await api('metrics'),url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download='metis-usage.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(error){$('error').textContent=error.message;}};
 $('refresh').onclick=refresh;refresh();setInterval(()=>{if(!document.hidden)refresh();},5000);
 </script>
 </html>
