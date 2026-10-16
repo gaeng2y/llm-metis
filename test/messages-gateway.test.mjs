@@ -75,6 +75,8 @@ test('Messages uses the Anthropic upstream, one evaluator call, native rewrites 
   const metric = gw.metrics.snapshot().requests.at(-1);
   assert.equal(metric.taskId, 'claude-task'); assert.equal(metric.mode, 'forced'); assert.equal(metric.appliedEffort, 'low');
   assert.equal(metric.inputTokens, 60); assert.equal(metric.cachedInputTokens, 30); assert.equal(metric.outputTokens, 9); assert.equal(metric.outcome, 'completed');
+  assert.equal(metric.uncachedInputTokens, 10); assert.equal(metric.cacheWriteInputTokens, 20);
+  assert.equal(metric.modelAttempts[0].complete, true);
   assert.doesNotMatch(JSON.stringify(metric), /existing-claude-login|existing-anthropic-key|Read package|local-only/);
 });
 
@@ -115,6 +117,9 @@ test('Messages retries rejected rewrites once with exact original bytes and enco
     assert.deepEqual(received[1].bytes, bytes); assert.equal(received[1].encoding, compressed ? 'gzip' : undefined);
     const metric = gw.metrics.snapshot().requests.at(-1);
     assert.equal(metric.reason, 'upstream_rejected_rewrite'); assert.equal(metric.effortApplied, false); assert.equal(metric.appliedEffort, 'high');
+    assert.deepEqual(metric.modelAttempts.map(a => [a.kind, a.status, a.complete]), [['rewrite', status, true], ['original', 200, true]]);
+    assert.equal(metric.inputTokens, 120); assert.equal(metric.uncachedInputTokens, 20);
+    assert.equal(metric.cachedInputTokens, 60); assert.equal(metric.cacheWriteInputTokens, 40); assert.equal(metric.outputTokens, 18);
   }
 });
 
@@ -149,6 +154,8 @@ test('Messages streams before completion and observes cumulative usage without c
   assert.equal(Buffer.concat(chunks).toString(), start + end);
   const metric = gw.metrics.snapshot().requests.at(-1);
   assert.equal(metric.inputTokens, 72); assert.equal(metric.cachedInputTokens, 40); assert.equal(metric.outputTokens, 9); assert.equal(metric.outcome, 'completed');
+  assert.equal(metric.uncachedInputTokens, 12); assert.equal(metric.cacheWriteInputTokens, 20);
+  assert.equal(metric.modelAttempts[0].complete, true);
 });
 
 test('Messages streaming errors and missing final events cannot report success', async t => {

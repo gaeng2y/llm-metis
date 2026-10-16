@@ -117,6 +117,88 @@ test('interrupted evaluator response bodies report transport failure or caller c
   await assert.rejects(evaluate(config,{}, {},abort.signal,async()=>new Response(cancelled)),error=>error===reason);
 });
 
+test('evaluator accounts for sent requests before validating answers or HTTP success',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'fake'});
+  for(const [status,answers,failure] of [[200,{tool:choice('passthrough'),effort:choice('low')},undefined],[200,null,'invalid_response'],[429,null,'rate_limit']]){
+    const reports=[];
+    const run=evaluate(config,{}, {},undefined,async()=>Response.json({answers,usage:{input_tokens:31,output_tokens:2}},{status}),attempt=>reports.push(attempt));
+    if(failure)await assert.rejects(run,{category:failure});else await run;
+    assert.deepEqual(reports[0],{dispatched:false,usage:{},complete:true,reasons:[]});
+    assert.equal(reports[1].dispatched,true);assert.equal(reports[1].complete,false);
+    const last=reports.at(-1);
+    assert.equal(last.dispatched,true);assert.equal(last.status,status);assert.equal(last.complete,true);
+    assert.equal(last.usage.inputTokens,31);assert.equal(last.usage.outputTokens,2);
+    assert.deepEqual(reports[0].usage,{});
+  }
+});
+
+test('evaluator preflight failures prove no dispatch while transport failure stays unknown usage',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'fake'});
+  const abort=new AbortController();abort.abort();
+  let calls=0;
+  for(const [cfg,input,signal] of [[{...config,jevApiKey:''},{},undefined],[config,'x'.repeat(100_000),undefined],[config,{},abort.signal]]){
+    const reports=[];
+    await assert.rejects(evaluate(cfg,input,{},signal,async()=>{calls++;return Response.json({answers:{}});},attempt=>reports.push(attempt)));
+    assert.deepEqual(reports.at(-1),{dispatched:false,usage:{},complete:true,reasons:[]});
+  }
+  assert.equal(calls,0);
+  const reports=[];
+  await assert.rejects(evaluate(config,{}, {},undefined,async()=>{throw Error('private network detail');},attempt=>reports.push(attempt)),{category:'transport'});
+  assert.deepEqual(reports.at(-1),{dispatched:true,usage:{},complete:false,reasons:['transport_error']});
+});
+
+test('routing preserves reported usage when evaluator envelope or independent answers fail',async()=>{
+  const config=loadConfig({METIS_PROVIDER:'typesafe',TYPESAFE_API_KEY:'fake'});
+  const request={model:'gpt-6-astra',input:'test',reasoning:{effort:'high'}};
+  for(const [status,answers,failure] of [[200,null,'invalid_response'],[200,{tool:choice('passthrough'),effort:choice('invented')},'invalid_response'],[503,null,'provider_error']]){
+    const engine=new JevDecisionEngine(config,async()=>Response.json({answers,usage:{input_tokens:17,output_tokens:3}},{status}));
+    const result=await control(request,engine,config);
+    assert.equal(result.jevOutcome,'failed');assert.equal(result.jevFailure,failure);
+    assert.equal(result.jevAttempt.dispatched,true);assert.equal(result.jevAttempt.status,status);
+    assert.equal(result.jevAttempt.complete,true);assert.equal(result.jevAttempt.usage.inputTokens,17);
+    assert.equal(result.jevAttempt.usage.outputTokens,3);
+  }
+});
+
+test('routing treats uninstrumented engines conservatively and skips already cancelled evaluation',async()=>{
+  const config=loadConfig({});
+  const request={model:'gpt-6-astra',input:'test',reasoning:{effort:'high'}};
+  const decision={tool:{mode:'passthrough',confidence:0},reasoning:{effort:'low',confidence:1},evaluator:{inputTokens:7,outputTokens:2}};
+  let calls=0;const engine={decide:async()=>{calls++;return decision;}};
+  const result=await control(request,engine,config);
+  assert.equal(result.jevAttempt.dispatched,'unknown');assert.equal(result.jevAttempt.complete,false);
+  assert.ok(result.jevAttempt.reasons.includes('accounting_unavailable'));
+  assert.equal(result.jevAttempt.usage.inputTokens,7);assert.equal(result.jevAttempt.usage.outputTokens,2);
+  const abort=new AbortController();abort.abort();
+  const cancelled=await control(request,engine,config,abort.signal);
+  assert.equal(calls,1);assert.equal(cancelled.jevOutcome,'cancelled');
+  assert.deepEqual(cancelled.jevAttempt,{dispatched:false,usage:{},complete:true,reasons:[]});
+});
+
+test('routing snapshots timeout and cancellation usage without accepting late mutations',async()=>{
+  for(const cancelled of [false,true]){
+    const config={...loadConfig({}),timeoutMs:20};
+    const request={model:'gpt-6-astra',input:'test',reasoning:{effort:'high'}};
+    const abort=new AbortController();let report;let release;
+    const initial={dispatched:true,status:200,usage:{inputTokens:11},complete:false,reasons:['output_missing']};
+    const engine={decide:async(_state,_signal,onUsage)=>{
+      report=onUsage;onUsage(initial);
+      if(cancelled)abort.abort();
+      return new Promise(resolve=>{release=resolve;});
+    }};
+    const result=await control(request,engine,config,abort.signal);
+    assert.equal(result.jevOutcome,cancelled?'cancelled':'failed');
+    assert.equal(result.jevAttempt.usage.inputTokens,11);assert.equal(result.jevAttempt.complete,false);
+    assert.ok(result.jevAttempt.reasons.includes(cancelled?'cancelled':'timeout'));
+    const snapshot=structuredClone(result.jevAttempt);
+    initial.usage.inputTokens=999;initial.reasons.push('late');
+    report({dispatched:true,status:200,usage:{inputTokens:999,outputTokens:9},complete:true,reasons:[]});
+    release({tool:{mode:'passthrough',confidence:0},reasoning:{effort:'high',confidence:1}});
+    await Promise.resolve();await Promise.resolve();
+    assert.deepEqual(result.jevAttempt,snapshot);
+  }
+});
+
 test('shared choice parser rejects invalid confidence and uses only the selected probability',()=>{
   for(const raw of [null,[],{},choice(1),{type:'noul',noul:.99}])assert.equal(parseChoiceAnswer(raw),undefined);
   for(const confidence of [-.2,1.1,NaN,Infinity,'0.99',null,undefined]){

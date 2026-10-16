@@ -70,6 +70,8 @@ test('CLI lifecycle, flags, task metrics, and unchanged Codex config',async t=>{
   const metrics=await(await fetch(`http://127.0.0.1:${port}/control/metrics`,{headers:{'x-metis-token':info.token}})).json();
   assert.equal(metrics.tasks.length,1);assert.equal(metrics.tasks[0].cohort,'effort-only');
   assert.ok(metrics.tasks[0].durationMs>=0);assert.equal(metrics.tasks[0].exitCode,0);
+  assert.equal(metrics.taskUsage[0].ended,true);assert.equal(metrics.taskUsage[0].complete,true);
+  assert.equal(metrics.taskUsage[0].cohort,'effort-only');assert.deepEqual(metrics.taskUsage[0].reasons,[]);
   await cli('--stop');assert.match((await cli('--status')).stdout,/stopped/);
 });
 
@@ -109,6 +111,49 @@ test('Metis recognizes and safely stops a legacy daemon before launching a new s
   assert.match((await cli('--stop')).stdout,/stopped/);
   assert.deepEqual(requests.filter(request=>request.path==='/control/stop'),[{path:'/control/stop',method:'POST',token}]);
   assert.match((await cli('--status')).stdout,/stopped/);
+});
+
+test('task start is negotiated before spawn; registration failures and older gateways still launch',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'metis task accounting ')),state=join(dir,'state');
+  await mkdir(state);
+  const token='d'.repeat(64),requests=[];
+  let accountingVersion=1,startStatus=200;
+  const server=createServer(async(req,res)=>{
+    const chunks=[];for await(const chunk of req)chunks.push(chunk);
+    const body=chunks.length?JSON.parse(Buffer.concat(chunks).toString()):undefined;
+    requests.push({path:req.url,body});
+    res.setHeader('content-type','application/json');
+    if(req.url==='/control/status'){res.end(JSON.stringify({service:'llm-metis',pid:process.pid,accountingVersion,toolRouting:true,effortRouting:false}));return;}
+    if(req.url==='/control/task/start')res.statusCode=startStatus;
+    res.end('{}');
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await rm(dir,{recursive:true,force:true});});
+  const port=server.address().port;
+  await writeFile(join(state,'instance.json'),JSON.stringify({id:'accounting-fixture',token,port,pid:process.pid}),{mode:0o600});
+  const fake=join(dir,'fake-codex.mjs');
+  await writeFile(fake,"await fetch(process.env.METIS_TEST_ORIGIN+'/spawn/'+process.env.METIS_CONTROL_TASK_ID); if(process.env.METIS_TEST_SIGNAL) process.kill(process.pid,'SIGTERM');\n");
+  const env={...process.env,METIS_CONFIG:join(dir,'settings.json'),METIS_STATE_DIR:state,METIS_PORT:String(port),METIS_CODEX_BIN:fake,METIS_TEST_ORIGIN:`http://127.0.0.1:${port}`};
+  const cli=()=>exec(process.execPath,['bin/metis-codex.mjs','--','exec','fixture'],{env,timeout:15000});
+  for(const scenario of [{version:1,status:200},{version:1,status:503},{version:undefined,status:200}]){
+    accountingVersion=scenario.version;startStatus=scenario.status;requests.length=0;
+    await cli();
+    const lifecycle=requests.filter(request=>request.path!=='/control/status');
+    const end=lifecycle.at(-1);
+    assert.equal(end.path,'/control/task');assert.equal(end.body.exitCode,0);assert.equal(end.body.cohort,'tool-only');
+    assert.ok(end.body.durationMs>=0);
+    if(accountingVersion===1){
+      assert.deepEqual(lifecycle.map(request=>request.path),['/control/task/start','/spawn/'+end.body.id,'/control/task']);
+      assert.deepEqual(lifecycle[0].body,{id:end.body.id,cohort:'tool-only'});
+    }else assert.deepEqual(lifecycle.map(request=>request.path),['/spawn/'+end.body.id,'/control/task']);
+  }
+  accountingVersion=1;requests.length=0;env.METIS_TEST_SIGNAL='1';
+  await assert.rejects(cli());
+  assert.equal(requests.at(-1).path,'/control/task');
+  assert.equal(requests.at(-1).body.exitCode,null);
+  requests.length=0;delete env.METIS_TEST_SIGNAL;env.METIS_CODEX_BIN=join(dir,'missing-command');
+  await assert.rejects(cli());
+  assert.deepEqual(requests.filter(request=>request.path!=='/control/status').map(request=>request.path),['/control/task/start']);
 });
 
 test('default legacy discovery respects its port and stopping Metis does not stop a second daemon',async t=>{
