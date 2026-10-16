@@ -69,4 +69,4 @@ Resume only after the user requests it. Before live execution, resolve the budge
 
 Gateway tests can check synthetic request transformations and exact fallback behavior. Existing installed-client smoke checks use fixed responses; the Claude smoke disables tools. These checks do not establish task quality, reread frequency, or actual cost savings.
 
-Current metrics do not expose cache-creation tokens separately. A cost comparison needs the relevant raw model and evaluator usage categories, including cache writes, with pricing recorded for the experiment.
+[Usage accounting](usage-accounting.md) now exposes reported cache-creation tokens separately, including available lifetime breakdowns, and marks missing usage explicitly. A cost comparison still needs complete model and evaluator usage categories, provider reconciliation where reporting is incomplete, and verified pricing recorded for the experiment. This measurement work does not resume the experiment.

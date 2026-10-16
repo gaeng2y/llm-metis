@@ -219,9 +219,10 @@ Prompts, arguments, authentication headers, and API keys are not logged. The das
 
 - Retention is limited to the latest 2,000 requests and 200 wrapper sessions. Restarting clears the data.
 - Model latency runs from the upstream request until the stream ends. If the original request is retried, it includes both attempts.
-- Missing usage appears as `—`, not zero. `*` indicates that only some requests reported usage.
+- Model attempts (including rejected rewrites and compaction) and Jev usage are shown separately and together. Missing usage appears as `—`, with explicit partial/unknown coverage and per-field reporting counts. Cache reads/writes and reasoning are breakdowns, not extra tokens.
 - Direct calls use zero upstream tokens; Jev usage is recorded separately. Dollar costs are not calculated because provider pricing has not been verified.
-- Task duration is the total lifetime of the client process launched by `metis-codex` or `metis-claude`. It includes user wait time in interactive sessions. For task comparisons, run one task per invocation with `metis-codex -- exec …` or `metis-claude -- -p …`. Changing modes during a session makes its task-level comparison unreliable.
+- Task duration is the total lifetime of the client process launched by `metis-codex` or `metis-claude`. It includes user wait time in interactive sessions. For task comparisons, run one task per invocation with `metis-codex -- exec …` or `metis-claude -- -p …`. Tasks spanning modes are labelled `mixed` and excluded from the four-mode task comparison while remaining in overall totals.
+- Complete task usage requires observed start/end, no active requests, and no missing records or usage. Normal exit alone does not prove completeness. Use **Download metrics JSON** to export the authenticated snapshot after each session; see [accounting boundaries](docs/usage-accounting.md) before comparing savings.
 - The dashboard token is passed in a URL fragment, then removed from the address. Both the control API and model proxy require a separate local token. Foreign Origin/Host headers are rejected.
 
 To compare the four modes, use the same model, initial effort, repository starting state, and task. Check the quality of each result as well.

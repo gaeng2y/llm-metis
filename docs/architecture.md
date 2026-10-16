@@ -71,3 +71,7 @@ The Responses-specific rules below apply to Codex. Claude Messages shares the in
 - Subscription authentication is passed through, not refreshed or read by the gateway. The Codex launcher reads only login mode metadata to select its default upstream. Real subscription/API acceptance and model compatibility for both clients still need live testing.
 - Dashboard comparisons are observational, not randomized experiments. Missing usage stays unknown. Per-request latency includes complete stream duration; wrapper task duration includes tool/user wait time. Direct inference uses zero upstream tokens and separately reports evaluator usage.
 - Metrics are bounded in memory and reset on restart. No persistence/database, native patch, leases, local Laya engine, or MCP grouping in this phase.
+
+## Reported usage accounting (2026-10-16)
+
+[Usage accounting](usage-accounting.md) extends the original measurement flow to retain every model attempt, compaction, and evaluator usage independently of routing success. Task start/end and active-request evidence support explicit coverage; eviction and missing reports remain partial. The [accounting ADR](adr/0001-reported-usage-accounting.md) records the bounded error-body observation budget and mixed-mode comparison policy. Existing generation-only routing observations remain separate from token accounting.
