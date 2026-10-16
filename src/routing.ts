@@ -3,12 +3,14 @@ import { extractState } from './state.js';
 import { extractAnthropicState } from './anthropic.js';
 import type { Config } from './config.js';
 import { JevError, type JevFailure } from './jev.js';
+import { usageRecord, type UsageAttempt } from './metrics.js';
 
 let evaluationSequence = 0;
 export interface RouteResult {
   request: JsonObject; mode: Mode; reason: string; effortApplied: boolean;
   jevCalled: boolean; jevLatencyMs: number; decision?: ControlDecision;
   jevOutcome?: 'succeeded' | 'failed' | 'cancelled'; jevFailure?: JevFailure | 'timeout'; jevCompletedAt?: string; jevSequence?: number;
+  jevAttempt?: UsageAttempt;
   direct?: { name: string; arguments: JsonObject };
 }
 export async function control(request: JsonObject, engine: DecisionEngine, config: Config, signal?: AbortSignal, protocol: 'responses' | 'messages' = 'responses'): Promise<RouteResult> {
@@ -28,15 +30,31 @@ export async function control(request: JsonObject, engine: DecisionEngine, confi
   const combined = signal ? AbortSignal.any([signal, abort.signal]) : abort.signal;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
+  let acceptingUsage = true; let reportedUsage = false;
+  const onUsage = (attempt: UsageAttempt) => {
+    if (!acceptingUsage) return;
+    reportedUsage = true;
+    result.jevAttempt = { ...attempt, usage: { ...attempt.usage }, reasons: [...attempt.reasons] };
+  };
   try {
     result.jevCalled = true;
+    result.jevAttempt = { dispatched: false, usage: {}, complete: true, reasons: [] };
+    combined.throwIfAborted();
     const deadline = new Promise<never>((_, reject) => {
       onAbort = () => reject(combined.reason);
       combined.addEventListener('abort', onAbort, { once: true });
       if (combined.aborted) onAbort();
       timer = setTimeout(() => abort.abort(new Error('deadline')), config.timeoutMs);
     });
-    const decision = await Promise.race([Promise.resolve().then(() => engine.decide(state, combined)), deadline]);
+    const decision = await Promise.race([Promise.resolve().then(() => {
+      combined.throwIfAborted();
+      result.jevAttempt = { dispatched: 'unknown', usage: {}, complete: false, reasons: ['accounting_unavailable'] };
+      return engine.decide(state, combined, onUsage);
+    }), deadline]);
+    if (!reportedUsage) {
+      const record = usageRecord(object(decision) ? decision.evaluator : undefined, 'jev');
+      result.jevAttempt = { ...record, dispatched: 'unknown', complete: false, reasons: [...record.reasons, 'accounting_unavailable'] };
+    }
     if (!object(decision) || !object(decision.tool) || !object(decision.reasoning)) throw new JevError('invalid_response');
     result.decision = decision;
     result.jevOutcome = 'succeeded';
@@ -69,7 +87,11 @@ export async function control(request: JsonObject, engine: DecisionEngine, confi
     result.reason = cancelled ? 'jev_cancelled' : abort.signal.aborted ? 'jev_timeout' : 'jev_error';
     result.jevOutcome = cancelled ? 'cancelled' : 'failed';
     result.jevFailure = cancelled ? undefined : abort.signal.aborted ? 'timeout' : error instanceof JevError ? error.category : 'unknown';
+    if (result.jevAttempt && result.jevAttempt.dispatched !== false && !result.jevAttempt.complete && (cancelled || abort.signal.aborted)) {
+      result.jevAttempt.reasons = [...new Set([...result.jevAttempt.reasons, cancelled ? 'cancelled' : 'timeout'])];
+    }
   } finally {
+    acceptingUsage = false;
     clearTimeout(timer);
     if (onAbort) combined.removeEventListener('abort', onAbort);
     result.jevLatencyMs = performance.now() - started;

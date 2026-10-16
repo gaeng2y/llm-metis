@@ -1,3 +1,5 @@
+import type { UsageAttempt } from './metrics.js';
+
 export type JsonObject = Record<string, unknown>;
 export const object = (value: unknown): value is JsonObject => value !== null && typeof value === 'object' && !Array.isArray(value);
 export const probability = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
@@ -31,7 +33,7 @@ export interface AgentState {
   truncated: boolean;
 }
 export interface DecisionEngine {
-  decide(state: AgentState, signal?: AbortSignal): Promise<ControlDecision>;
+  decide(state: AgentState, signal?: AbortSignal, onUsage?: (attempt: UsageAttempt) => void): Promise<ControlDecision>;
 }
 
 /** Only this small, fully enumerable schema subset can safely bypass argument generation. */

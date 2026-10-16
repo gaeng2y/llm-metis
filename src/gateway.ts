@@ -7,7 +7,7 @@ import type { Config } from './config.js';
 import { object, type DecisionEngine, type JsonObject } from './decision.js';
 import { JevDecisionEngine } from './jev.js';
 import { control, type RouteResult } from './routing.js';
-import { Metrics, UsageObserver, cohort, routeMetric, type Cohort } from './metrics.js';
+import { Metrics, UsageObserver, cohort, observeDiscardedUsage, routeMetric, summarizeUsage, type Cohort, type UsageAttempt } from './metrics.js';
 
 const LIMIT = 32 * 1024 * 1024;
 const hop = ['host','connection','content-length','transfer-encoding','keep-alive','proxy-authenticate','proxy-authorization','te','trailer','upgrade'];
@@ -82,16 +82,22 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
     // Claude credentials live only in its loopback base URL, never in headers sent to another origin.
     const claudePath = /^\/anthropic\/([a-f0-9]{64})\/([\w-]{1,80})(\/v1\/messages(?:\/count_tokens)?)$/.exec(url.pathname);
     if (!equalToken(req.headers['x-metis-token'], token) && !(claudePath && equalToken(claudePath[1], token))) return json(res, 401, { error: 'Private local token required' });
-    if (url.pathname === '/control/status' && req.method === 'GET') return json(res, 200, { service: 'llm-metis', version: '0.1.0', pid: process.pid, protocols: ['responses','messages'], ...routing, upstream: config.upstreamBaseUrl, anthropicUpstream: config.anthropicBaseUrl, provider: config.provider, jevConfigured: Boolean(config.jevApiKey), directCalls: config.directCalls, observations: metrics.observations() });
+    if (url.pathname === '/control/status' && req.method === 'GET') return json(res, 200, { service: 'llm-metis', version: '0.1.0', pid: process.pid, protocols: ['responses','messages'], accountingVersion: 1, ...routing, upstream: config.upstreamBaseUrl, anthropicUpstream: config.anthropicBaseUrl, provider: config.provider, jevConfigured: Boolean(config.jevApiKey), directCalls: config.directCalls, observations: metrics.observations() });
     if (url.pathname === '/control/metrics' && req.method === 'GET') return json(res, 200, metrics.snapshot());
     if (url.pathname === '/control/routing' && req.method === 'POST') {
       const value = parseBody(await readBody(req, 4096));
       if (!value || Object.keys(value).some(k => !['toolRouting','effortRouting'].includes(k)) || Object.values(value).some(v => typeof v !== 'boolean')) return json(res, 400, { error: 'Boolean toolRouting/effortRouting required' });
       Object.assign(routing, value); return json(res, 200, routing);
     }
+    if (url.pathname === '/control/task/start' && req.method === 'POST') {
+      const value = parseBody(await readBody(req, 4096));
+      if (!value || typeof value.id !== 'string' || !/^[\w-]{1,80}$/.test(value.id) || typeof value.cohort !== 'string' || !['baseline','tool-only','effort-only','tool+effort'].includes(value.cohort)) return json(res, 400, { error: 'Invalid task start' });
+      if (!metrics.startTask({ id: value.id, cohort: value.cohort as Cohort })) return json(res, 409, { error: 'Task already observed' });
+      return json(res, 200, { ok: true });
+    }
     if (url.pathname === '/control/task' && req.method === 'POST') {
       const value = parseBody(await readBody(req, 4096));
-      if (!value || typeof value.id !== 'string' || !/^[\w-]{1,80}$/.test(value.id) || !['baseline','tool-only','effort-only','tool+effort'].includes(String(value.cohort)) || typeof value.durationMs !== 'number' || !Number.isFinite(value.durationMs) || value.durationMs < 0 || !(value.exitCode === null || Number.isInteger(value.exitCode))) return json(res, 400, { error: 'Invalid task metric' });
+      if (!value || typeof value.id !== 'string' || !/^[\w-]{1,80}$/.test(value.id) || typeof value.cohort !== 'string' || !['baseline','tool-only','effort-only','tool+effort'].includes(value.cohort) || typeof value.durationMs !== 'number' || !Number.isFinite(value.durationMs) || value.durationMs < 0 || !(value.exitCode === null || Number.isInteger(value.exitCode))) return json(res, 400, { error: 'Invalid task metric' });
       metrics.addTask({ id: value.id, cohort: value.cohort as Cohort, durationMs: value.durationMs, exitCode: value.exitCode as number | null }); return json(res, 200, { ok: true });
     }
     if (url.pathname === '/control/stop' && req.method === 'POST' && onStop) { json(res, 200, { stopping: true }); setImmediate(onStop); return; }
@@ -99,26 +105,37 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
     const path = claudePath ? claudePath[3]! : anthropic ? url.pathname.slice('/anthropic'.length) : url.pathname.replace(/^\/v1(?=\/|$)/, '');
     if (anthropic ? !(req.method === 'POST' && ['/v1/messages','/v1/messages/count_tokens'].includes(path)) : !(req.method === 'POST' && ['/responses','/responses/compact'].includes(path)) && !(req.method === 'GET' && path === '/models')) return json(res, 404, { error: 'Unsupported endpoint' });
     const isGeneration = path === '/responses' || path === '/v1/messages';
+    const isMetered = isGeneration || path === '/responses/compact';
+    const task = claudePath?.[2] ?? req.headers['x-metis-task-id'];
+    const taskId = typeof task === 'string' && /^[\w-]{1,80}$/.test(task) ? task : undefined;
+    const finishRequest = isMetered ? metrics.beginRequest(taskId) : undefined;
     const abort = new AbortController();
     res.on('close', () => { if (!res.writableEnded) abort.abort(); });
     const started = performance.now();
-    const bytes = req.method === 'POST' ? await readBody(req) : undefined;
-    const parsed = bytes ? parseBody(bytes, req.headers['content-encoding']) : undefined;
     const cfg = { ...config, ...routing };
-    let route: RouteResult = { request: parsed ?? {}, mode: 'passthrough', reason: 'unrouted_endpoint', effortApplied: false, jevCalled: false, jevLatencyMs: 0 };
-    if (isGeneration && parsed) {
-      if (engine || config.jevApiKey) route = await control(parsed, evaluator, cfg, abort.signal, anthropic ? 'messages' : 'responses');
-      else route.reason = 'jev_credentials_missing';
-    }
-    const modelStarted = performance.now();
-    let status = 502; let outcome = 'upstream_error';
+    const protocol = anthropic ? 'messages' : 'responses';
+    let parsed: JsonObject | undefined;
+    let route: RouteResult = { request: {}, mode: 'passthrough', reason: 'unrouted_endpoint', effortApplied: false, jevCalled: false, jevLatencyMs: 0 };
+    let modelStarted: number | undefined;
+    let status = 400; let outcome = 'invalid_request';
     let observer: UsageObserver | undefined;
+    const modelAttempts: UsageAttempt[] = [];
+    let activeAttempt: UsageAttempt | undefined;
+    let interrupted: string | undefined;
     let modelLatencyMs = 0;
     try {
+      const bytes = req.method === 'POST' ? await readBody(req) : undefined;
+      parsed = bytes ? parseBody(bytes, req.headers['content-encoding']) : undefined;
+      route.request = parsed ?? {};
+      if (isGeneration && parsed) {
+        if (engine || config.jevApiKey) route = await control(parsed, evaluator, cfg, abort.signal, protocol);
+        else route.reason = 'jev_credentials_missing';
+      }
+      modelStarted = performance.now();
+      status = 502; outcome = 'upstream_error';
       if (abort.signal.aborted) throw Error('cancelled');
       if (route.direct) {
         const direct = directResponse(parsed!, route.direct);
-        observer = new UsageObserver(Boolean(parsed!.stream)); observer.write(Buffer.from(direct.body)); observer.finish();
         res.writeHead(200, { 'content-type': direct.type, 'cache-control': 'no-store' });
         res.end(direct.body); status = 200; outcome = 'completed';
       } else {
@@ -127,18 +144,24 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
           try { rewrittenBody = JSON.stringify(route.request); }
           catch { route = { ...route, request: parsed, mode: 'passthrough', effortApplied: false, reason: 'rewrite_failed' }; }
         }
-        const send = (rewrite: boolean) => {
+        const send = async (rewrite: boolean) => {
+          if (abort.signal.aborted) throw Error('cancelled');
           const headers = new Headers();
           const dropped = new Set([...hop, ...(req.headers.connection ?? '').toLowerCase().split(',').map(v => v.trim()), 'accept-encoding','origin','referer']);
           for (const [key, value] of Object.entries(req.headers)) if (!dropped.has(key) && !key.startsWith('x-metis-') && !key.startsWith('x-jev-') && !key.startsWith('sec-') && value !== undefined) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
           if (rewrite) headers.delete('content-encoding');
-          return fetch(`${anthropic ? config.anthropicBaseUrl : config.upstreamBaseUrl}${path}${url.search}`, { method: req.method, headers,
+          activeAttempt = { dispatched: true, kind: rewrite ? 'rewrite' : 'original', usage: {}, complete: false, reasons: ['usage_missing'] };
+          modelAttempts.push(activeAttempt);
+          const response = await fetch(`${anthropic ? config.anthropicBaseUrl : config.upstreamBaseUrl}${path}${url.search}`, { method: req.method, headers,
             body: rewrite ? rewrittenBody : bytes ? new Uint8Array(bytes) : undefined, signal: abort.signal, redirect: 'error' });
+          activeAttempt.status = response.status;
+          return response;
         };
         const rewritten = parsed !== undefined && route.request !== parsed;
         let upstream = await send(rewritten);
         if (rewritten && [400,422].includes(upstream.status)) {
-          await upstream.body?.cancel();
+          Object.assign(activeAttempt!, await observeDiscardedUsage(upstream, abort.signal, protocol));
+          activeAttempt = undefined;
           route = { ...route, request: parsed!, mode: 'passthrough', effortApplied: false, reason: 'upstream_rejected_rewrite' };
           upstream = await send(false);
         }
@@ -148,7 +171,7 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
         upstream.headers.forEach((v, k) => { if (!dropped.has(k) && !k.startsWith('access-control-')) responseHeaders[k] = v; });
         res.writeHead(status, responseHeaders);
         const isSSE = upstream.headers.get('content-type')?.includes('text/event-stream') ?? false;
-        observer = new UsageObserver(isSSE);
+        observer = new UsageObserver(isSSE, protocol);
         if (upstream.body) for await (const chunk of upstream.body) {
           observer.write(chunk);
           if (!res.write(chunk)) await once(res, 'drain', { signal: abort.signal });
@@ -159,17 +182,19 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
         modelLatencyMs = performance.now() - modelStarted;
       }
     } catch {
+      if (modelStarted === undefined) throw Error('Invalid local request');
       modelLatencyMs = performance.now() - modelStarted;
+      interrupted = abort.signal.aborted ? 'cancelled' : 'transport_error';
       outcome = observer?.outcome === 'completed' ? 'completed' : abort.signal.aborted ? 'cancelled' : 'upstream_error';
       if (!res.headersSent && !res.destroyed) json(res, 502, { error: 'Upstream transport failed' });
       else if (!res.writableEnded) res.destroy();
     } finally {
-      if (isGeneration) {
-        const task = claudePath?.[2] ?? req.headers['x-metis-task-id'];
-        metrics.add({ id: randomUUID(), time: new Date().toISOString(), cohort: cohort(cfg), model: typeof parsed?.model === 'string' ? parsed.model.slice(0, 100) : '',
-          taskId: typeof task === 'string' && /^[\w-]{1,80}$/.test(task) ? task : undefined,
-          ...routeMetric(route, cfg), ...observer?.usage, modelLatencyMs, requestLatencyMs: performance.now() - started, status, outcome });
-      }
+      try {
+        if (activeAttempt) Object.assign(activeAttempt, observer ? observer.accounting(interrupted) : { usage: {}, complete: false, reasons: [interrupted ?? 'usage_missing'] });
+        if (isMetered) metrics.add({ id: randomUUID(), time: new Date().toISOString(), cohort: cohort(cfg), model: typeof parsed?.model === 'string' ? parsed.model.slice(0, 100) : '',
+          taskId, kind: isGeneration ? 'generation' : 'compaction', modelAttempts,
+          ...routeMetric(route, cfg), ...summarizeUsage(modelAttempts).usage, modelLatencyMs, requestLatencyMs: performance.now() - started, status, outcome });
+      } finally { finishRequest?.(); }
     }
   }
   return { server, metrics };
