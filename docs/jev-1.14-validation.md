@@ -66,4 +66,6 @@ This explicitly makes up to 60 paid evaluator requests. `--repeats 1` limits it 
 
 Local validation passed TypeScript checking, all 122 fixture tests, and the installed Codex and Claude smoke checks with temporary configuration and fake local providers. An existing test initially failed on Node 24.18.1: a buffered body could win `Promise.race` against an already-aborted signal. Giving the interruption promise priority fixes that race; the strengthened regression asserts that cancelled usage stays incomplete and empty. The only production code change is this one-line cancellation fix.
 
+The first remote CI run also exposed an existing Windows-specific fixture expectation: self-sending `SIGTERM` exits with code 1 on Windows, whereas POSIX reports a signal and null code. The lifecycle test now checks the platform's actual termination result while still requiring task accounting before exit; client runtime behavior is unchanged.
+
 No provider defaults, confidence thresholds, timeout, request budget, or user configuration were changed by the implementation. To opt in separately, select OpenRouter with `METIS_MODEL=typesafe/jev-1.14`; rollback is `METIS_MODEL=typesafe/jev-1.13`. Restart the gateway after either change. Issue #9 stays open until its remaining gates are met.
