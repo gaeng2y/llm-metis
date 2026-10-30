@@ -347,7 +347,7 @@ export async function observeDiscardedUsage(response: Response, signal?: AbortSi
     let bytes = 0;
     for (;;) {
       if (performance.now() >= deadline) return observer.accounting('body_timeout');
-      const next = await Promise.race([reader.read(), interrupted]);
+      const next = await Promise.race([interrupted, reader.read()]);
       if (next.done) { ended = true; observer.finish(); return observer.accounting(); }
       bytes += next.value.byteLength;
       if (bytes > 64 * 1024) return observer.accounting('body_limit');
