@@ -8,28 +8,35 @@ const html=await readFile(new URL('../src/dashboard.html',import.meta.url),'utf8
 class Element {
   children=[];
   value='';
+  open=false;
+  dataset={};
   _text='';
+  constructor(tagName=''){this.tagName=tagName.toUpperCase();}
   set textContent(value){this._text=String(value);this.children=[];}
   get textContent(){return this._text+this.children.map(child=>child.textContent).join(' ');}
   append(...children){this.children.push(...children);}
   replaceChildren(...children){this._text='';this.children=children;}
+  querySelectorAll(selector){
+    assert.equal(selector,'details[open]');
+    return this.children.flatMap(child=>[...(child.tagName==='DETAILS'&&child.open?[child]:[]),...child.querySelectorAll(selector)]);
+  }
   click(){this.clicked=true;}
 }
 
 async function dashboard(data){
   const elements=Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map(([,id])=>[id,new Element()]));
-  const calls=[],downloads=[];
+  const calls=[],downloads=[],intervals=[];
   const context={
-    document:{getElementById:id=>elements[id],createElement:()=>new Element(),hidden:false},
+    document:{getElementById:id=>elements[id],createElement:tagName=>new Element(tagName),hidden:false},
     location:{hash:'',pathname:'/dashboard'},sessionStorage:{getItem:()=>''},
     URLSearchParams,Blob,
     URL:{createObjectURL:blob=>{downloads.push(blob);return 'blob:fixture';},revokeObjectURL:()=>{}},
-    setInterval:()=>{},setTimeout:callback=>callback(),
+    setInterval:(callback,delay)=>intervals.push({callback,delay}),setTimeout:callback=>callback(),
     fetch:async(path,options)=>{calls.push({path,options});return {ok:true,json:async()=>path.endsWith('/metrics')?data:{toolRouting:false,effortRouting:false,provider:'fixture'}};},
   };
   runInNewContext(html.match(/<script>([\s\S]*)<\/script>/)[1],context);
   await new Promise(resolve=>setImmediate(resolve));
-  return {elements,calls,downloads};
+  return {elements,calls,downloads,intervals};
 }
 
 const summary=(usage,knownTotalTokens,{complete=true,attempts=1,reportedAttempts=attempts,completeAttempts=complete?attempts:0,reasons=[]}={})=>({usage,knownTotalTokens,complete,attempts,reportedAttempts,completeAttempts,reasons});
@@ -37,6 +44,51 @@ const empty=()=>summary({},0,{attempts:0});
 const task=(id,cohort,model,extra={})=>({id,cohort,launchCohort:'baseline',ended:true,durationMs:100,exitCode:0,activeRequests:0,requestCount:1,complete:model.complete,reasons:model.reasons,model,evaluator:empty(),combined:model,...extra});
 const snapshot=tasks=>({startedAt:new Date().toISOString(),requests:[],tasks:[],taskUsage:tasks,unassignedRequests:0,usage:{model:empty(),evaluator:empty(),combined:empty()}});
 const cells=row=>row.children.map(cell=>cell.textContent);
+
+test('task breakdowns retain independent user state across automatic and manual refreshes with fresh usage',async()=>{
+  const complete=summary({inputTokens:10,outputTokens:2},12);
+  const makeTask=(id,usage=complete)=>task(id,'baseline',usage);
+  const data=snapshot(['task-a','task-b','task-c'].map(id=>makeTask(id)));
+  const {elements,intervals,calls}=await dashboard(data);
+  const breakdowns=()=>{
+    const found=new Map();
+    for(let index=0;index<elements.tasks.children.length;index+=2){
+      const details=elements.tasks.children[index+1].children[0].children[0];
+      assert.equal(details.tagName,'DETAILS');
+      found.set(cells(elements.tasks.children[index])[0],details);
+    }
+    return found;
+  };
+  const states=()=>Object.fromEntries([...breakdowns()].map(([id,details])=>[id,details.open]));
+  assert.equal(intervals.length,1);assert.equal(intervals[0].delay,5000);
+  const tick=async()=>{intervals[0].callback();await new Promise(resolve=>setImmediate(resolve));};
+  breakdowns().get('task-a').open=true;
+  breakdowns().get('task-b').open=true;
+  data.taskUsage=['task-b','task-c','task-a','task-d'].map(id=>makeTask(id));
+  await tick();
+  assert.deepEqual(states(),{'task-d':false,'task-a':true,'task-c':false,'task-b':true});
+  assert.equal(calls.filter(call=>call.path==='/control/metrics').length,2);
+
+  breakdowns().get('task-a').open=false;
+  const updated={...summary({inputTokens:70,cachedInputTokens:30,outputTokens:7},77,{complete:false,attempts:2,reportedAttempts:1,reasons:['usage_missing']}),fieldCoverage:{cachedInputTokens:{reported:1,attempts:2}}};
+  data.taskUsage=['task-a','task-b','task-c','task-d'].map(id=>makeTask(id,id==='task-b'?updated:complete));
+  await elements.refresh.onclick();
+  assert.deepEqual(states(),{'task-d':false,'task-c':false,'task-b':true,'task-a':false});
+  const model=cells(breakdowns().get('task-b').children[1].children[1].children[0]);
+  assert.equal(model[1],'Partial · usage_missing');
+  assert.equal(model[2],'0 / 2 (1 reported)');
+  assert.equal(model[3],'77');assert.equal(model[4],'70');
+  assert.equal(model[6],'30 · 1 / 2 reported');
+  assert.equal(calls.filter(call=>call.path==='/control/metrics').length,3);
+
+  data.taskUsage=['task-a','task-c'].map(id=>makeTask(id));
+  await tick();
+  assert.deepEqual(states(),{'task-c':false,'task-a':false});
+  data.taskUsage=['task-b','task-a','task-c'].map(id=>makeTask(id));
+  await elements.refresh.onclick();
+  assert.deepEqual(states(),{'task-c':false,'task-a':false,'task-b':false});
+  assert.equal(elements.error.textContent,'');
+});
 
 test('dashboard preserves reported model/Jev totals, cache subsets and unknown coverage',async()=>{
   const model=summary({inputTokens:120,uncachedInputTokens:50,cachedInputTokens:40,cacheWriteInputTokens:30,cacheWrite5mInputTokens:20,cacheWrite1hInputTokens:10,outputTokens:12,reasoningTokens:4},132);

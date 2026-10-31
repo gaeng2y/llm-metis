@@ -49,6 +49,7 @@ function groupUsage(tasks,key){
   return {knownTotalTokens:totals.length?totals.reduce((a,b)=>a+b,0):undefined,complete:tasks.length>0&&tasks.every(task=>task.complete&&task[key].complete),attempts:summaries.reduce((n,s)=>n+s.attempts,0),reportedAttempts:summaries.reduce((n,s)=>n+s.reportedAttempts,0),completeAttempts:summaries.reduce((n,s)=>n+s.completeAttempts,0)};
 }
 function renderUsage(data){
+  const expandedTasks=new Set([...$('tasks').querySelectorAll('details[open]')].map(details=>details.dataset.taskId));
   for(const id of ['usage','task-comparison','tasks'])$(id).replaceChildren();
   usageRows($('usage'),data.usage);
   const tasks=data.taskUsage;
@@ -67,6 +68,7 @@ function renderUsage(data){
     const state=task.complete?'Complete':task.combined.reportedAttempts?'Partial':'Unknown';
     row($('tasks'),[task.id,modeLabel(task.cohort)+(task.launchCohort?' · launched '+modeLabel(task.launchCohort):''),task.ended?'Ended':'End unconfirmed',state+(task.reasons.length?' · '+task.reasons.join(', '):''),knownTotal(task.model),knownTotal(task.evaluator),knownTotal(task.combined),coverage(task.combined),`${format(task.requestCount)} / ${format(task.activeRequests)}`,ms(task.durationMs),task.ended?(task.exitCode??'Signal / unknown'):'—']);
     const tr=document.createElement('tr'),td=document.createElement('td'),details=document.createElement('details'),summary=document.createElement('summary'),table=document.createElement('table'),head=document.createElement('thead'),body=document.createElement('tbody');
+    details.dataset.taskId=task.id;details.open=expandedTasks.has(task.id);
     td.colSpan=11;summary.textContent='Token breakdown';row(head,usageHeaders,true);usageRows(body,task);table.append(head,body);details.append(summary,table);td.append(details);tr.append(td);$('tasks').append(tr);
   }
 }
