@@ -82,3 +82,9 @@ Task tests cover start-before-spawn negotiation, registration failure and older 
 Both installed-client smoke scripts (`node test/codex-smoke.mjs` and `node test/claude-smoke.mjs`, after the build) passed with isolated temporary configuration, fabricated credentials, and local servers. Each observed one Jev call, high-to-low effort, and completed SSE. No paid inference or real provider billing reconciliation was performed. Actual browser inspection was unavailable because this environment exposed no browser; renderer tests do not establish visual layout. Native Windows/Linux execution and remote CI were not rerun.
 
 The [accounting guide](usage-accounting.md) describes the export format and remaining observation limits for the [#1 experiment](https://github.com/gaeng2y/llm-metis/issues/1). That live experiment and its savings report have not been run, and the #5 experiment remains on hold.
+
+## Jev 1.14 comparison (2026-10-31)
+
+The [Jev 1.14 validation report](jev-1.14-validation.md) records a live OpenRouter comparison using ten fixed English/Korean cases, three repeats per version, and the unchanged 2s/0.85 controls. All 60 final-run evaluations met the authored routing expectations, with no errors or timeouts. Reported evaluator cost and input usage were identical; the report distinguishes these results from end-to-end task quality, confidence calibration, cache accounting, and total task cost. Defaults remain unchanged while those gates and live TypeSafe/Vercel compatibility remain unverified.
+
+Local type checking, all 122 fixture tests, and installed Codex/Claude smoke checks passed. Verification also exposed and fixed an existing pre-aborted response-body race on Node 24.18.1. The comparison is opt-in and never performs live calls through `npm test`.

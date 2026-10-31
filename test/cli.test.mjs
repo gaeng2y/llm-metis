@@ -150,10 +150,12 @@ test('task start is negotiated before spawn; registration failures and older gat
   accountingVersion=1;requests.length=0;env.METIS_TEST_SIGNAL='1';
   await assert.rejects(cli());
   assert.equal(requests.at(-1).path,'/control/task');
-  assert.equal(requests.at(-1).body.exitCode,null);
+  // Windows reports a child's self-sent SIGTERM as exit code 1, without a parent-side signal.
+  assert.equal(requests.at(-1).body.exitCode,process.platform==='win32'?1:null);
   requests.length=0;delete env.METIS_TEST_SIGNAL;env.METIS_CODEX_BIN=join(dir,'missing-command');
   await assert.rejects(cli());
-  assert.deepEqual(requests.filter(request=>request.path!=='/control/status').map(request=>request.path),['/control/task/start']);
+  // Windows validates the executable before registration; POSIX rejects it during spawn.
+  assert.deepEqual(requests.filter(request=>request.path!=='/control/status').map(request=>request.path),process.platform==='win32'?[]:['/control/task/start']);
 });
 
 test('default legacy discovery respects its port and stopping Metis does not stop a second daemon',async t=>{

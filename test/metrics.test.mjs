@@ -97,8 +97,9 @@ test('discarded-body limits and cancellation cannot wait for cancellation cleanu
   assert.ok(result.reasons.includes('body_timeout')); assert.equal(cancelled, true);
   const large = await observeDiscardedUsage(new Response('x'.repeat(64 * 1024 + 1)));
   assert.ok(large.reasons.includes('body_limit'));
-  const aborted = await observeDiscardedUsage(new Response('body'), AbortSignal.abort());
-  assert.ok(aborted.reasons.includes('cancelled'));
+  const aborted = await observeDiscardedUsage(Response.json({ usage: { input_tokens: 10, output_tokens: 2 } }), AbortSignal.abort());
+  assert.ok(aborted.reasons.includes('cancelled')); assert.equal(aborted.complete, false);
+  assert.deepEqual(aborted.usage, {});
   const locked = new Response('body'); const reader = locked.body.getReader();
   assert.ok((await observeDiscardedUsage(locked)).reasons.includes('transport_error')); await reader.cancel(); reader.releaseLock();
 });
