@@ -7,6 +7,10 @@ function text(value: unknown): string {
   return '';
 }
 
+function hasImage(content: unknown): boolean {
+  return Array.isArray(content) && content.some(block => object(block) && block.type === 'input_image');
+}
+
 export function extractState(request: JsonObject): AgentState {
   let truncated = false;
   const clip = (value: string, max = 3000) => {
@@ -36,7 +40,16 @@ export function extractState(request: JsonObject): AgentState {
   if (Array.isArray(request.tools)) request.tools.forEach(t => add(t));
   for (const item of items) if (item.type === 'additional_tools' && Array.isArray(item.tools)) item.tools.forEach(t => add(t));
   const messages = items.filter(i => typeof i.role === 'string');
-  const recentContext = messages.slice(-8).map(i => ({ role: String(i.role), text: clip(text(i.content)) }));
+  const latestUserContent = messages.findLast(i => i.role === 'user')?.content;
+  const userTask = text(latestUserContent);
+  const recentContext = messages.slice(-8).map(i => {
+    let content = text(i.content);
+    if (hasImage(i.content)) {
+      truncated = true;
+      content = content ? `${content}\n[image omitted]` : '[image omitted]';
+    }
+    return { role: String(i.role), text: clip(content) };
+  });
   for (const item of items.slice(-8)) if (item.type === 'reasoning') {
     const summary = text(item.summary);
     if (summary) recentContext.push({ role: 'public_summary', text: clip(summary) });
@@ -48,12 +61,13 @@ export function extractState(request: JsonObject): AgentState {
   }));
   return {
     model: typeof request.model === 'string' ? request.model : '',
-    userTask: clip(text(messages.findLast(i => i.role === 'user')?.content), 6000),
+    userTask: clip(userTask, 6000),
     instructions: clip(typeof request.instructions === 'string' ? request.instructions : '', 4000),
     recentContext, recentToolCalls, availableTools: [...tools.values()],
     currentEffort: object(request.reasoning) && typeof request.reasoning.effort === 'string' ? request.reasoning.effort : undefined,
     toolChoice: request.tool_choice ?? 'auto',
-    incompleteHistory: Boolean(request.previous_response_id || request.conversation || items.some(i => i.type === 'item_reference')),
+    incompleteHistory: Boolean(request.previous_response_id || request.conversation || items.some(i => i.type === 'item_reference') ||
+      (!userTask.trim() && hasImage(latestUserContent))),
     nativeEffort: items.some(i => i.type === 'configuration_update'),
     truncated: truncated || messages.length > 8 || items.length > 16,
   };

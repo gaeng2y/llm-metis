@@ -13,7 +13,8 @@ const usage = { input_tokens: 90, input_tokens_details: { cached_tokens: 30 }, o
 async function setup(t, handler, opts = {}) {
   const upstream = createServer(handler);
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
-  const cfg = { ...loadConfig({}), upstreamBaseUrl: `http://127.0.0.1:${upstream.address().port}/base`, ...opts };
+  const origin = `http://127.0.0.1:${upstream.address().port}`;
+  const cfg = { ...loadConfig({}), upstreamBaseUrl: `${origin}/base`, anthropicBaseUrl: origin, ...opts };
   const gateway = createGateway({ config: cfg, token, engine: opts.engine ?? { decide: async () => decision } });
   gateway.server.listen(0, '127.0.0.1'); await once(gateway.server, 'listening');
   t.after(async () => { gateway.server.closeAllConnections(); upstream.closeAllConnections(); await Promise.all([new Promise(r => gateway.server.close(r)), new Promise(r => upstream.close(r))]); });
@@ -47,6 +48,51 @@ test('auth passthrough, unrelated fields, JSON usage and privacy', async t => {
   assert.ok(!JSON.stringify(event).includes('existing-codex-login'));
   assert.equal(event.input, undefined);
 });
+
+for (const [path, inputKey, textType, image, request] of [
+  ['/v1/responses', 'input', 'input_text', { type: 'input_image', image_url: 'https://private-image.invalid/sample.png' }, body],
+  ['/anthropic/v1/messages', 'messages', 'text', { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'cHJpdmF0ZSBpbWFnZSBieXRlcw==' } }, {
+    model: 'claude-sonnet-4-6', max_tokens: 1000, output_config: { effort: 'high' },
+    tools: [{ name: 'read', input_schema: { type: 'object', properties: {} } }],
+  }],
+]) {
+  test(`${inputKey}: image-only turns bypass routing, while text can still be evaluated`, async t => {
+    let received;
+    const states = [];
+    const gw = await setup(t, async (req, res) => {
+      received = await read(req);
+      res.end(JSON.stringify({ usage }));
+    }, { engine: { decide: async state => { states.push(state); return decision; } } });
+    const prior = [{ role: 'user', content: 'Previous task' }, { role: 'assistant', content: 'Done.' }];
+    const send = async content => {
+      const input = [...prior, { role: 'user', content }];
+      const original = JSON.stringify({ ...request, [inputKey]: input }, null, 2);
+      const response = await fetch(`${gw.url}${path}`, { method: 'POST', headers, body: original });
+      assert.equal(response.status, 200); await response.text();
+      return original;
+    };
+
+    const original = await send([image]);
+    assert.equal(received, original, 'upstream should receive the original image-only request');
+    assert.equal(states.length, 0);
+    assert.equal(gw.metrics.snapshot().requests.at(-1).reason, 'incomplete_history');
+
+    const text = { type: textType, text: 'Current task' };
+    for (const withImage of [true, false]) {
+      const sent = await send(withImage ? [text, image] : [text]);
+      const state = states.at(-1);
+      assert.equal(state.userTask, text.text);
+      assert.equal(state.truncated, withImage);
+      assert.equal(state.recentContext.at(-1).text, withImage ? 'Current task\n[image omitted]' : 'Current task');
+      const forwarded = JSON.parse(received);
+      assert.deepEqual(forwarded[inputKey], JSON.parse(sent)[inputKey]);
+      assert.equal(forwarded.tool_choice.name, decision.tool.name);
+      assert.equal((forwarded.reasoning ?? forwarded.output_config).effort, 'low');
+    }
+    assert.equal(states.length, 2);
+    assert.ok(!JSON.stringify({ states, metrics: gw.metrics.snapshot() }).includes(image.image_url ?? image.source.data));
+  });
+}
 
 test('400 rewrite rejection retries byte-exact original, including compressed body', async t => {
   for (const compressed of [false, true]) {

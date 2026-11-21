@@ -15,9 +15,13 @@ export function extractAnthropicState(request: JsonObject): AgentState {
   for (const message of Array.isArray(request.messages) ? request.messages : []) {
     if (!object(message)) { incompleteHistory = true; continue; }
     if (object(message.output_config) && message.output_config.effort !== undefined) nativeEffort = true;
+    const blocks = Array.isArray(message.content) ? message.content : [];
     const text = publicText(message.content);
-    if (text) input.push({ role: message.role, content: text });
-    for (const block of Array.isArray(message.content) ? message.content : []) {
+    const hasImage = blocks.some(block => object(block) && block.type === 'image');
+    if (text || hasImage) input.push({
+      role: message.role, content: hasImage ? [{ type: 'text', text }, { type: 'input_image' }] : text,
+    });
+    for (const block of blocks) {
       if (!object(block)) continue;
       if (['compaction', 'redacted_compaction', 'item_reference'].includes(String(block.type))) incompleteHistory = true;
       if (block.type === 'tool_use') input.push({

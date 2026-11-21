@@ -33,6 +33,20 @@ test('Anthropic extraction retains public context and tool schemas without priva
   assert.equal(JSON.stringify(body), original);
 });
 
+test('an image-only user turn stays current through a tool result', () => {
+  const body = request();
+  body.messages.push({ role: 'assistant', content: 'Done.' },
+    { role: 'user', content: [{ type: 'image', source: { type: 'url', url: 'https://private-image.invalid/sample.png' } }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'tool_1', name: 'Read', input: { path: 'package.json' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool_1', content: '{}' }] });
+  const state = extractAnthropicState(body);
+  assert.equal(state.userTask, '');
+  assert.deepEqual(state.recentContext.at(-1), { role: 'user', text: '[image omitted]' });
+  assert.equal(state.incompleteHistory, true);
+  assert.equal(state.recentToolCalls.at(-1).output, '{}');
+  assert.doesNotMatch(JSON.stringify(state), /private-image/);
+});
+
 test('Anthropic extraction preserves caller constraints and skips incomplete history', () => {
   assert.equal(extractAnthropicState({ ...request(), tool_choice: { type: 'auto', disable_parallel_tool_use: true } }).toolChoice, 'auto');
   for (const choice of [{ type: 'tool', name: 'Read' }, { type: 'none' }, null]) {
