@@ -68,7 +68,7 @@ flowchart LR
 
 Codex and Claude Code keep their model authentication and execute their own tools. Metis applies tool and effort decisions only when the corresponding confidence gate passes; uncertain decisions leave that part of the request unchanged.
 
-Jev receives recent public conversation context, public summaries, bounded excerpts of tool results, and available tool definitions. Images and encrypted reasoning items are excluded. **The gateway runs locally, but decision inference runs at the selected external provider.**
+Jev receives recent public conversation context, public summaries, bounded excerpts of tool results, and available tool definitions. Images and encrypted reasoning items are excluded. If the latest user message has images and no visible text, Metis forwards the original request without evaluating it. In recent message context, images appear as `[image omitted]`. **The gateway runs locally, but decision inference runs at the selected external provider.**
 
 <a id="providers"></a>
 
