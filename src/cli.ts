@@ -14,6 +14,7 @@ import { codexLaunch, claudeLaunch, dashboardLaunch, writePrivateFile } from './
 import { configure, configuredEnv, configPath } from './configure.js';
 
 interface Instance { id: string; token: string; port: number; pid: number; legacy?: boolean }
+const STARTUP_TIMEOUT_MS = 8000;
 const stateDir = () => resolve(process.env.METIS_STATE_DIR ?? join(homedir(), '.local', 'state', 'llm-metis'));
 const stateFile = () => join(stateDir(), 'instance.json');
 const origin = (i: Instance) => `http://127.0.0.1:${i.port}`;
@@ -23,21 +24,23 @@ async function readInstance(file = stateFile()): Promise<Instance | undefined> {
     if (object(v) && typeof v.id === 'string' && typeof v.token === 'string' && /^[a-f0-9]{64}$/.test(v.token) && Number.isInteger(v.port) && Number(v.port) > 0 && Number(v.port) <= 65535 && Number.isInteger(v.pid)) return v as unknown as Instance;
   } catch { /* Missing/stale state is handled by the requested command. */ }
 }
-async function api(i: Instance, path: string, body?: unknown): Promise<Record<string, unknown>> {
-  const res = await fetch(`${origin(i)}/control/${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { [i.legacy ? 'x-jev-token' : 'x-metis-token']: i.token, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(2000), redirect: 'error' });
+async function api(i: Instance, path: string, body?: unknown, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const timeout = AbortSignal.timeout(2000);
+  const res = await fetch(`${origin(i)}/control/${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { [i.legacy ? 'x-jev-token' : 'x-metis-token']: i.token, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: 'error' });
   if (!res.ok) throw Error('Gateway management request failed');
   return await res.json() as Record<string, unknown>;
 }
-async function running(currentOnly = false) {
+async function running(currentOnly = false, signal?: AbortSignal) {
   const files = [stateFile()];
   if (process.env.METIS_STATE_DIR === undefined) files.push(join(homedir(), '.local', 'state', 'jev-control', 'instance.json'));
   for (const file of files) {
     const saved = await readInstance(file);
     if (!saved || (file !== stateFile() && saved.port !== Number(process.env.METIS_PORT ?? 8791))) continue;
     for (const legacy of [false, true]) {
+      if (signal?.aborted) return;
       const instance = { ...saved, legacy };
       let status: Record<string, unknown>;
-      try { status = await api(instance, 'status'); }
+      try { status = await api(instance, 'status', undefined, signal); }
       catch { continue; } // Never signal a PID from a stale file.
       if (status.service !== (legacy ? 'jev-control' : 'llm-metis') || status.pid !== instance.pid) continue;
       if (currentOnly && legacy) throw Error('An older gateway is running. After its tasks finish, run metis-codex --stop then metis-codex --start to use Metis.');
@@ -94,13 +97,20 @@ async function ensureStarted() {
   const existing = await running(true); if (existing) return existing;
   await mkdir(stateDir(), { recursive: true, mode: 0o700 });
   const lock = join(stateDir(), 'start.lock');
-  try { await mkdir(lock, { mode: 0o700 }); }
-  catch { throw Error(`Another start is in progress. If no start process remains, remove ${lock} and retry.`); }
+  const deadline = AbortSignal.timeout(STARTUP_TIMEOUT_MS);
+  for (;;) {
+    try { await mkdir(lock, { mode: 0o700 }); break; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    const live = await running(true, deadline);
+    if (live) return live;
+    try { await delay(100, undefined, { signal: deadline }); }
+    catch { throw Error(`Timed out waiting for another gateway start. If no start process remains, remove ${lock} and retry.`); }
+  }
   try {
     const again = await running(true); if (again) return again;
     const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/metis-codex.mjs', import.meta.url)), '--serve'], { detached: true, windowsHide: true, stdio: ['ignore','ignore','ignore','ipc'], env: process.env });
     await new Promise<void>((accept, reject) => {
-      const timer = setTimeout(() => { child.kill('SIGTERM'); reject(Error('Gateway startup timed out')); }, 8000);
+      const timer = setTimeout(() => { child.kill('SIGTERM'); reject(Error('Gateway startup timed out')); }, STARTUP_TIMEOUT_MS);
       const cleanup = () => { clearTimeout(timer); child.removeAllListeners('error'); child.removeAllListeners('exit'); child.removeAllListeners('message'); };
       child.once('error', () => { cleanup(); reject(Error('Cannot launch gateway')); });
       child.once('exit', () => { cleanup(); reject(Error('Gateway startup failed; run metis-codex --serve for details')); });
