@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, readFile, writeFile, readdir, realpath, stat, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, readdir, realpath, stat, unlink, rmdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,6 +87,59 @@ process.exitCode=Number(process.env.METIS_TEST_EXIT??0);
   });
   return { dir, project, env, port, requests, cli, capture: async () => JSON.parse(await readFile(env.METIS_TEST_CAPTURE, 'utf8')) };
 }
+
+test('concurrent starts and bare Codex and Claude launches share one gateway', async t => {
+  const f = await fixture(t);
+  const lock = join(f.env.METIS_STATE_DIR, 'start.lock');
+  const stateFile = join(f.env.METIS_STATE_DIR, 'instance.json');
+  await mkdir(lock, { recursive: true });
+  const waiting = Promise.withResolvers();
+  let probes = 0;
+  const booting = createServer((req, res) => {
+    // The second current-token probe proves the first launcher hit the held lock.
+    if (req.headers['x-metis-token'] && ++probes === 2) waiting.resolve();
+    res.writeHead(503).end();
+  });
+  booting.listen(0, '127.0.0.1'); await once(booting, 'listening');
+  t.after(async () => { booting.closeAllConnections(); await new Promise(resolve => booting.close(resolve)); });
+  await writeFile(stateFile, JSON.stringify({ id: 'booting', token: 'b'.repeat(64), port: booting.address().port, pid: process.pid }));
+
+  const firstStart = f.cli('codex', ['--start']);
+  await Promise.race([waiting.promise, firstStart.then(result => assert.fail(result.stderr || result.stdout))]);
+  assert.ok((await stat(lock)).isDirectory());
+  const launches = [
+    f.cli('codex', [], 'codex', { METIS_TEST_CAPTURE: join(f.dir, 'codex.json') }),
+    f.cli('claude', [], 'claude', { METIS_TEST_CAPTURE: join(f.dir, 'claude.json') }),
+    firstStart, ...Array.from({ length: 5 }, () => f.cli('codex', ['--start'])),
+  ];
+  await unlink(stateFile);
+  await rmdir(lock);
+  const [codex, claude, ...starts] = (await Promise.all(launches)).map(success);
+  assert.equal(codex.stdout, 'client:codex');
+  assert.equal(claude.stdout, 'client:claude');
+  assert.ok(starts.every(result => result.stdout.trim() === `llm-metis running at http://127.0.0.1:${f.port}`));
+  const instance = JSON.parse(await readFile(stateFile, 'utf8'));
+  const status = JSON.parse(success(await f.cli('codex', ['--status'])).stdout);
+  assert.equal(status.pid, instance.pid);
+  assert.equal(instance.port, f.port);
+  const metrics = await fetch(`http://127.0.0.1:${f.port}/control/metrics`, { headers: { 'x-metis-token': instance.token } });
+  assert.equal(metrics.status, 200);
+  assert.deepEqual((await metrics.json()).tasks.map(task => task.exitCode), [0, 0]);
+  await assert.rejects(stat(lock), { code: 'ENOENT' });
+});
+
+test('a stuck startup lock times out and leaves independent gateways available', async t => {
+  const blocked = await fixture(t);
+  const lock = join(blocked.env.METIS_STATE_DIR, 'start.lock');
+  await mkdir(lock, { recursive: true });
+  const independent = await fixture(t);
+  assert.notEqual(independent.port, blocked.port);
+  const [failure, started] = await Promise.all([blocked.cli('codex', ['--start']), independent.cli('claude', ['--start'])]);
+  assert.equal(failure.code, 1);
+  assert.match(failure.stderr, /Timed out waiting for another gateway start/);
+  assert.ok((await stat(lock)).isDirectory());
+  assert.match(success(started).stdout, new RegExp(`:${independent.port}\\b`));
+});
 
 test('bare client commands launch interactive clients with inherited cwd, streams, auth, and private gateway routing', async t => {
   const f = await fixture(t);
