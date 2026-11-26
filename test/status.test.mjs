@@ -23,12 +23,12 @@ async function fixture(t, options={}) {
   });
   upstream.listen(0,'127.0.0.1'); await once(upstream,'listening');
   const base=`http://127.0.0.1:${upstream.address().port}`;
-  const gateway=createGateway({token:headers['x-metis-token'],config:{...loadConfig({}),jevApiKey:'private-key',jevUrl:`${base}/evaluate`,upstreamBaseUrl:base,timeoutMs:500,...options}});
+  const gateway=createGateway({token:headers['x-metis-token'],config:{...loadConfig({}),jevApiKey:'private-key',jevUrl:`${base}/evaluate`,upstreamBaseUrl:base,anthropicBaseUrl:base,timeoutMs:500,...options}});
   gateway.server.listen(0,'127.0.0.1');await once(gateway.server,'listening');
   const url=`http://127.0.0.1:${gateway.server.address().port}`;
   t.after(async()=>{gateway.server.closeAllConnections();upstream.closeAllConnections();await Promise.all([new Promise(r=>gateway.server.close(r)),new Promise(r=>upstream.close(r))]);});
   const get=async path=>(await fetch(`${url}/control/${path}`,{headers})).json();
-  const generate=async (body=request)=>{const response=await fetch(`${url}/v1/responses`,{method:'POST',headers,body:JSON.stringify(body)});await response.text();return response.status;};
+  const generate=async (body=request, path='/v1/responses')=>{const response=await fetch(`${url}${path}`,{method:'POST',headers,body:JSON.stringify(body)});await response.text();return response.status;};
   return {url,calls,behavior,get,generate};
 }
 
@@ -163,6 +163,62 @@ test('partial invalid answers can apply a valid dimension and disabled dimension
   assert.equal(observed.evaluation.failures,1);assert.equal(observed.evaluation.successes,1);
   assert.equal(observed.routing.effortApplied,2);
 });
+
+for (const { protocol, path, body, effortField, forcedToolChoice } of [
+  {
+    protocol: 'Responses', path: '/v1/responses',
+    body: { ...request, tool_choice: 'auto' },
+    effortField: 'reasoning', forcedToolChoice: { type: 'function', name: 'read' },
+  },
+  {
+    protocol: 'Messages', path: '/anthropic/v1/messages',
+    body: {
+      model: 'claude-sonnet-4-6', max_tokens: 1000, messages: [{ role: 'user', content: 'Read a file' }],
+      tools: [{ name: 'read', input_schema: { type: 'object', properties: {} } }],
+      tool_choice: { type: 'auto' }, output_config: { effort: 'high' },
+    },
+    effortField: 'output_config', forcedToolChoice: { type: 'tool', name: 'read' },
+  },
+]) {
+  test(`${protocol}: live routing changes reach the default evaluator and metrics`, async t => {
+    const f = await fixture(t, { toolRouting: false, effortRouting: false });
+    const toolCriteria = [];
+    const forwarded = [];
+    f.behavior.evaluate = ({ questions }, res) => {
+      const criteria = questions.tool.criteria;
+      toolCriteria.push(criteria);
+      const tool = choice(Object.hasOwn(criteria, 't0') ? 't0' : 'no_tool');
+      res.end(JSON.stringify({ answers: { tool, effort: choice('low') } }));
+    };
+    f.behavior.model = (request, res) => { forwarded.push(request); res.end('{}'); };
+
+    for (const routing of [
+      { toolRouting: true, effortRouting: false },
+      { toolRouting: false, effortRouting: true },
+      { toolRouting: false, effortRouting: false },
+    ]) {
+      const response = await fetch(`${f.url}/control/routing`, { method: 'POST', headers, body: JSON.stringify(routing) });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), routing);
+      assert.equal(await f.generate(body, path), 200);
+    }
+
+    assert.deepEqual(f.calls, { evaluations: 2, models: 3 });
+    assert.match(toolCriteria[0].t0 ?? '', /^read:/, 'enabling tool routing should send the read tool to Jev');
+    assert.equal(Object.hasOwn(toolCriteria[1], 't0'), false);
+    assert.deepEqual(forwarded, [
+      { ...body, tool_choice: forcedToolChoice },
+      { ...body, [effortField]: { effort: 'low' } },
+      body,
+    ]);
+    const { requests } = await f.get('metrics');
+    assert.deepEqual(requests.map(({ cohort, mode, effortApplied, jevCalled }) => [cohort, mode, effortApplied, jevCalled]), [
+      ['tool-only', 'forced', false, true],
+      ['effort-only', 'passthrough', true, true],
+      ['baseline', 'passthrough', false, false],
+    ]);
+  });
+}
 
 test('latest evaluation is ordered by evaluation completion rather than model response completion',async t=>{
   t.mock.method(Date.prototype,'toISOString',()=> '2026-10-15T00:00:00.000Z');

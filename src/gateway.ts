@@ -59,7 +59,6 @@ function directResponse(request: JsonObject, direct: NonNullable<RouteResult['di
 export function createGateway({ config, token, engine, onStop }: { config: Config; token: string; engine?: DecisionEngine; onStop?: () => void }) {
   if (!token) throw Error('A private local token is required');
   const metrics = new Metrics();
-  const evaluator = engine ?? new JevDecisionEngine(config);
   const routing = { toolRouting: config.toolRouting, effortRouting: config.effortRouting };
   const dashboard = readFileSync(new URL('../src/dashboard.html', import.meta.url), 'utf8');
   const server = createServer((req, res) => {
@@ -128,7 +127,7 @@ export function createGateway({ config, token, engine, onStop }: { config: Confi
       parsed = bytes ? parseBody(bytes, req.headers['content-encoding']) : undefined;
       route.request = parsed ?? {};
       if (isGeneration && parsed) {
-        if (engine || config.jevApiKey) route = await control(parsed, evaluator, cfg, abort.signal, protocol);
+        if (engine || cfg.jevApiKey) route = await control(parsed, engine ?? new JevDecisionEngine(cfg), cfg, abort.signal, protocol);
         else route.reason = 'jev_credentials_missing';
       }
       modelStarted = performance.now();
